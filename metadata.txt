@@ -1,0 +1,16 @@
+[general]
+name=Right-Click Actions Toolkit
+description=Universal right-click context menu plugin that automatically detects features (points, lines, polygons) anywhere on the canvas and provides context-aware actions.
+version=1.0.3
+qgisMinimumVersion=3.0
+qgisMaximumVersion=3.99
+homepage=https://github.com/kacperkolbusz/qgis-rightclick-actions-toolkit
+repository=https://github.com/kacperkolbusz/qgis-rightclick-actions-toolkit
+tracker=https://github.com/kacperkolbusz/qgis-rightclick-actions-toolkit/issues
+author=Kacper Kolbusz
+email=kk.at.work@pm.me
+about=This plugin provides universal right-click functionality that works anywhere on the QGIS canvas. It automatically detects features of any type (points, multipoints, lines, multilines, polygons, multipolygons) at the cursor position and displays context-aware actions. Features include smart feature detection with extended tolerance for points and lines, hierarchical menus for overlapping features, and a modular action system that's easy to extend. No layer selection required - works on all visible vector layers.
+category=Utilities
+tags=right-click,context-menu,utilities,shortcuts,feature-detection,vector,points,lines,polygons,actions
+experimental=False
+deprecated=False
