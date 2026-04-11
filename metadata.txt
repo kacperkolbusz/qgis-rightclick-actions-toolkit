@@ -1,7 +1,7 @@
 [general]
 name=Right-Click Actions Toolkit
 description=Universal right-click context menu plugin that automatically detects features (points, lines, polygons) anywhere on the canvas and provides context-aware actions.
-version=1.0.3
+version=1.0.6
 qgisMinimumVersion=3.0
 qgisMaximumVersion=3.99
 homepage=https://github.com/kacperkolbusz/qgis-rightclick-actions-toolkit

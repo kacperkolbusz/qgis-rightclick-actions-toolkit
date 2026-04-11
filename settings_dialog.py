@@ -1282,7 +1282,7 @@ class SettingsDialog(QDialog):
     def show_about(self):
         """Show information about the plugin."""
         message = f"Right-click Utilities and Shortcuts Hub\n"
-        message += f"Version 0.9.2\n\n"
+        message += f"Version 1.0.6\n\n"
         message += f"A universal right-click context menu plugin that automatically\n"
         message += f"detects features anywhere on the canvas.\n\n"
         message += f"Features:\n"
