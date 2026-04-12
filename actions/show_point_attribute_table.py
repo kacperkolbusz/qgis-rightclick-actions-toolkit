@@ -19,7 +19,7 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QCheckBox, QScrollArea, QWidget, QFrame, QApplication,
     QGroupBox, QSpinBox, QComboBox, QToolButton, QSizePolicy,
-    QColorDialog
+    QColorDialog, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from qgis.PyQt.QtCore import Qt, QSettings, QRectF, QPointF
 from qgis.PyQt.QtGui import (
@@ -53,6 +53,7 @@ _DEFAULT_APPEARANCE = {
     "leader_style":   "dot",       # "dot" | "dash" | "solid" | "none"
     "show_anchor":    True,        # draw leader line + anchor dot
     "placement":      "top",        # top | bottom | left | right | top-left | top-right | bottom-left | bottom-right
+    "orientation":    "horizontal", # horizontal | vertical
     # NOTE: a future enhancement could expose a fixed-screen sizing mode here.
 }
 
@@ -73,6 +74,392 @@ _PLACEMENT_CELLS = [
 _APPEARANCE_SETTINGS_KEY = "RightClickUtilities/show_point_attribute_table/appearance"
 
 
+# Pre-defined appearance presets. Add further presets here as needed.
+_APPEARANCE_PRESETS = [
+    {"name": "Default Classic", "values": dict(_DEFAULT_APPEARANCE)},
+    {
+        "name": "Dark Mode",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#2E3440",
+            "header_fg": "#ECEFF4",
+            "value_bg": "#3B4252",
+            "value_bg_alt": "#434C5E",
+            "grid_color": "#4C566A",
+            "border_color": "#2E3440",
+            "anchor_color": "#88C0D0",
+            "value_fg": "#ECEFF4",
+            "shadow": True,
+            "corner_radius": 6,
+            "leader_style": "solid",
+            "show_anchor": True,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Light",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#F7F7F7",
+            "header_fg": "#111111",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#FAFAFA",
+            "grid_color": "#E0E0E0",
+            "border_color": "#D0D0D0",
+            "anchor_color": "#217346",
+            "value_fg": "#111111",
+            "shadow": False,
+            "corner_radius": 4,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "High Contrast",
+        "values": {
+            "font_family": "",
+            "font_size": 10,
+            "header_bg": "#000000",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#FFF9C4",
+            "grid_color": "#000000",
+            "border_color": "#000000",
+            "anchor_color": "#FF0000",
+            "value_fg": "#000000",
+            "shadow": False,
+            "corner_radius": 0,
+            "leader_style": "solid",
+            "show_anchor": True,
+            "placement": "right",
+            "orientation": "vertical",
+        },
+    },
+    {
+        "name": "Muted Pastel",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#88BDB6",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#F0F8F8",
+            "grid_color": "#DCEFEA",
+            "border_color": "#B9DCCE",
+            "anchor_color": "#7FB6AE",
+            "value_fg": "#333333",
+            "shadow": True,
+            "corner_radius": 8,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Blue Accent",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#1E88E5",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#E3F2FD",
+            "grid_color": "#BBDEFB",
+            "border_color": "#90CAF9",
+            "anchor_color": "#1976D2",
+            "value_fg": "#0D47A1",
+            "shadow": True,
+            "corner_radius": 6,
+            "leader_style": "dash",
+            "show_anchor": True,
+            "placement": "top-right",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Monochrome",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#222222",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#F0F0F0",
+            "grid_color": "#CCCCCC",
+            "border_color": "#444444",
+            "anchor_color": "#666666",
+            "value_fg": "#111111",
+            "shadow": False,
+            "corner_radius": 3,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "bottom",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Compact Small",
+        "values": {
+            "font_family": "",
+            "font_size": 7,
+            "header_bg": "#2E7D32",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#F3F7F3",
+            "grid_color": "#C8E6C9",
+            "border_color": "#A5D6A7",
+            "anchor_color": "#2E7D32",
+            "value_fg": "#111111",
+            "shadow": False,
+            "corner_radius": 3,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "right",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Large Print",
+        "values": {
+            "font_family": "",
+            "font_size": 14,
+            "header_bg": "#1B5E20",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#E8F5E9",
+            "grid_color": "#C8E6C9",
+            "border_color": "#2E7D32",
+            "anchor_color": "#388E3C",
+            "value_fg": "#111111",
+            "shadow": True,
+            "corner_radius": 8,
+            "leader_style": "solid",
+            "show_anchor": True,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Minimal No Anchor",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#FFFFFF",
+            "header_fg": "#111111",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#FFFFFF",
+            "grid_color": "#E0E0E0",
+            "border_color": "#E0E0E0",
+            "anchor_color": "#FFFFFF",
+            "value_fg": "#111111",
+            "shadow": False,
+            "corner_radius": 2,
+            "leader_style": "none",
+            "show_anchor": False,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Sunset Warm",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#FF7043",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFF3E0",
+            "value_bg_alt": "#FFF8E1",
+            "grid_color": "#FFDAB9",
+            "border_color": "#FF8A65",
+            "anchor_color": "#FF7043",
+            "value_fg": "#4E342E",
+            "shadow": True,
+            "corner_radius": 6,
+            "leader_style": "dash",
+            "show_anchor": True,
+            "placement": "bottom-right",
+            "orientation": "horizontal",
+        },
+    },
+
+    # Additional presets
+    {
+        "name": "Neon Glow",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#00FFC8",
+            "header_fg": "#000000",
+            "value_bg": "#001219",
+            "value_bg_alt": "#001F2D",
+            "grid_color": "#003049",
+            "border_color": "#00E5FF",
+            "anchor_color": "#00FFC8",
+            "value_fg": "#E6F7FF",
+            "shadow": True,
+            "corner_radius": 6,
+            "leader_style": "solid",
+            "show_anchor": True,
+            "placement": "top-right",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Forest Deep",
+        "values": {
+            "font_family": "",
+            "font_size": 10,
+            "header_bg": "#154734",
+            "header_fg": "#E6F4EA",
+            "value_bg": "#F7FBF7",
+            "value_bg_alt": "#EEF7EE",
+            "grid_color": "#C9E6D8",
+            "border_color": "#123B2A",
+            "anchor_color": "#2E7D32",
+            "value_fg": "#153D2E",
+            "shadow": False,
+            "corner_radius": 8,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "left",
+            "orientation": "vertical",
+        },
+    },
+    {
+        "name": "Earth Tones",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#8D6E63",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFF6F1",
+            "value_bg_alt": "#FEF2EA",
+            "grid_color": "#D7C4B6",
+            "border_color": "#6D4C41",
+            "anchor_color": "#A1887F",
+            "value_fg": "#3E2723",
+            "shadow": False,
+            "corner_radius": 6,
+            "leader_style": "dash",
+            "show_anchor": True,
+            "placement": "bottom-left",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Candy Pop",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#FF6B6B",
+            "header_fg": "#FFFFFF",
+            "value_bg": "#FFF5F7",
+            "value_bg_alt": "#FFF0F3",
+            "grid_color": "#FFD1DC",
+            "border_color": "#FF9AA2",
+            "anchor_color": "#FF6B6B",
+            "value_fg": "#40233A",
+            "shadow": True,
+            "corner_radius": 10,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Slate Minimal",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#263238",
+            "header_fg": "#CFD8DC",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#FAFAFA",
+            "grid_color": "#ECEFF1",
+            "border_color": "#37474F",
+            "anchor_color": "#90A4AE",
+            "value_fg": "#263238",
+            "shadow": False,
+            "corner_radius": 2,
+            "leader_style": "none",
+            "show_anchor": False,
+            "placement": "top",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Retro 70s",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#D2691E",
+            "header_fg": "#FFF7E6",
+            "value_bg": "#FFF7E0",
+            "value_bg_alt": "#FFF0D9",
+            "grid_color": "#E6C8B2",
+            "border_color": "#B5651D",
+            "anchor_color": "#D2691E",
+            "value_fg": "#40231A",
+            "shadow": True,
+            "corner_radius": 8,
+            "leader_style": "dash",
+            "show_anchor": True,
+            "placement": "bottom",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Sci-Fi Cyan",
+        "values": {
+            "font_family": "",
+            "font_size": 10,
+            "header_bg": "#003542",
+            "header_fg": "#18FFFF",
+            "value_bg": "#001B22",
+            "value_bg_alt": "#001018",
+            "grid_color": "#004D61",
+            "border_color": "#00BCD4",
+            "anchor_color": "#00E5FF",
+            "value_fg": "#BEEFFF",
+            "shadow": True,
+            "corner_radius": 4,
+            "leader_style": "solid",
+            "show_anchor": True,
+            "placement": "right",
+            "orientation": "horizontal",
+        },
+    },
+    {
+        "name": "Glass Frost",
+        "values": {
+            "font_family": "",
+            "font_size": 9,
+            "header_bg": "#E3F2FD",
+            "header_fg": "#0D47A1",
+            "value_bg": "#FFFFFF",
+            "value_bg_alt": "#F7FBFF",
+            "grid_color": "#E0F2F8",
+            "border_color": "#B3E5FC",
+            "anchor_color": "#64B5F6",
+            "value_fg": "#0D47A1",
+            "shadow": True,
+            "corner_radius": 12,
+            "leader_style": "dot",
+            "show_anchor": True,
+            "placement": "top-left",
+            "orientation": "horizontal",
+        },
+    },
+]
+
+
 def _load_saved_appearance():
     """Load persisted appearance from QSettings, falling back to defaults."""
     try:
@@ -87,6 +474,8 @@ def _load_saved_appearance():
             result["show_anchor"] = str(result["show_anchor"]).lower() not in ("false", "0", "no")
             if result.get("placement") not in [c[1] for c in _PLACEMENT_CELLS]:
                 result["placement"] = "top"
+            if result.get("orientation") not in ("horizontal", "vertical"):
+                result["orientation"] = "horizontal"
             return result
     except Exception:
         pass
@@ -125,6 +514,99 @@ def _make_color_button(color_hex: str, parent=None):
     return btn
 
 
+class ReorderableListWidget(QListWidget):
+    """QListWidget configured for internal drag/drop reordering.
+
+    Supports an optional callback that's called after an internal move
+    so callers can refresh previews or state.
+    """
+    def __init__(self, on_reorder=None, parent=None):
+        super().__init__(parent)
+        try:
+            self.setDragDropMode(QAbstractItemView.InternalMove)
+            self.setDefaultDropAction(Qt.MoveAction)
+        except Exception:
+            pass
+        self._on_reorder = on_reorder
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        if callable(self._on_reorder):
+            try:
+                self._on_reorder()
+            except Exception:
+                pass
+
+
+class PreviewWidget(QWidget):
+    """Small widget that renders a sample attribute-table annotation.
+
+    It instantiates an AttributeTableAnnotationItem at runtime and calls
+    its drawing helper so the preview matches the on-map rendering.
+    """
+
+    def __init__(self, layer, feature, fields=None, appearance=None, font_size=9, null_display="NULL", parent=None):
+        super().__init__(parent)
+        self._layer = layer
+        self._feature = feature
+        self._fields = list(fields) if fields else []
+        self._appearance = dict(appearance) if appearance else {}
+        self._font_size = font_size
+        self._null_display = null_display
+        self.setMinimumSize(320, 120)
+
+    def set_fields(self, fields):
+        self._fields = list(fields) if fields else []
+        self.update()
+
+    def set_feature(self, feature):
+        self._feature = feature
+        self.update()
+
+    def set_appearance(self, appearance):
+        self._appearance = dict(appearance) if appearance else {}
+        self.update()
+
+    def set_font_size(self, sz):
+        try:
+            self._font_size = int(sz)
+        except Exception:
+            pass
+        self.update()
+
+    def set_null_display(self, nd):
+        self._null_display = nd
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        rect = self.rect()
+        if not self._feature or not self._fields:
+            painter.drawText(rect, Qt.AlignCenter, "Preview\n(no fields selected)")
+            return
+        try:
+            # Create a lightweight annotation item and let it draw itself
+            map_point = QgsPointXY(0, 0)
+            item = AttributeTableAnnotationItem(
+                map_point=map_point,
+                feature=self._feature,
+                layer=self._layer,
+                fields=self._fields,
+                font_size=self._font_size,
+                null_display=self._null_display,
+                appearance=self._appearance,
+            )
+            painter.save()
+            # Translate painter so the anchor dot is centered in the widget
+            painter.translate(rect.width() / 2.0, rect.height() / 2.0)
+            item._draw_table(painter)
+            painter.restore()
+        except Exception as e:
+            painter.drawText(rect, Qt.AlignCenter, f"Preview error: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Field Selection + Appearance Dialog
 # ---------------------------------------------------------------------------
@@ -132,21 +614,27 @@ def _make_color_button(color_hex: str, parent=None):
 class FieldSelectionDialog(QDialog):
     """Lets the user pick which fields to display and customise table appearance."""
 
-    def __init__(self, layer, feature, saved_fields=None, saved_appearance=None, parent=None):
+    def __init__(self, layer, feature, saved_fields=None, saved_appearance=None, null_display="NULL", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Attribute Table on Map")
         self.setModal(True)
         # Make the dialog wider by default so controls can be laid out horizontally
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(760)
 
         self._layer   = layer
         self._feature = feature
         self._checkboxes   = {}
         self._saved_fields = saved_fields or []
         self._app = dict(saved_appearance) if saved_appearance else _load_saved_appearance()
+        self._null_display = null_display
 
         self._setup_ui()
         self._restore_selection()
+        # Ensure preview matches restored selection + appearance
+        try:
+            self._update_preview()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _setup_ui(self):
@@ -165,7 +653,7 @@ class FieldSelectionDialog(QDialog):
             screen_h = screen.availableGeometry().height() if screen else 800
         except Exception:
             screen_h = 800
-        main_scroll.setMaximumHeight(min(700, max(400, screen_h - 200)))
+        main_scroll.setMaximumHeight(min(820, max(480, screen_h - 180)))
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -190,36 +678,34 @@ class FieldSelectionDialog(QDialog):
         fg_layout.setContentsMargins(6, 6, 6, 6)
         fg_layout.setSpacing(4)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setMinimumHeight(150)
-        scroll.setMaximumHeight(230)
-
-        inner = QWidget()
-        inner_layout = QVBoxLayout(inner)
-        inner_layout.setSpacing(3)
-        inner_layout.setContentsMargins(4, 4, 4, 4)
-
+        # Reorderable, checkable list of fields
+        self._fields_list = ReorderableListWidget(on_reorder=self._update_preview, parent=self)
+        self._fields_list.setSelectionMode(QListWidget.SingleSelection)
+        self._fields_list.setMinimumHeight(150)
+        self._fields_list.setMaximumHeight(230)
         for field in self._layer.fields():
-            cb = QCheckBox(field.name())
+            item = QListWidgetItem(field.name())
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            item.setCheckState(Qt.Checked)
             raw = self._feature[field.name()]
             if raw is None or (hasattr(raw, "isNull") and raw.isNull()):
                 tip_val = "NULL"
             else:
-                tv      = str(raw)
+                tv = str(raw)
                 tip_val = tv[:60] + "..." if len(tv) > 60 else tv
-            cb.setToolTip(f"Type: {field.typeName()}  |  Value: {tip_val}")
-            self._checkboxes[field.name()] = cb
-            inner_layout.addWidget(cb)
+            item.setToolTip(f"Type: {field.typeName()}  |  Value: {tip_val}")
+            self._fields_list.addItem(item)
 
-        inner_layout.addStretch()
-        scroll.setWidget(inner)
-        fg_layout.addWidget(scroll)
+        # Update preview when check state changes
+        try:
+            self._fields_list.itemChanged.connect(self._update_preview)
+        except Exception:
+            pass
+
+        fg_layout.addWidget(self._fields_list)
 
         btn_row = QHBoxLayout()
-        btn_all  = QPushButton("Select All")
+        btn_all = QPushButton("Select All")
         btn_all.setMaximumWidth(100)
         btn_all.clicked.connect(self._select_all)
         btn_none = QPushButton("Select None")
@@ -235,6 +721,24 @@ class FieldSelectionDialog(QDialog):
         fg_layout.addWidget(self._remember_cb)
 
         content_layout.addWidget(fields_group)
+
+        # ---- Live Preview ----
+        preview_group = QGroupBox("Live Preview")
+        pg_layout = QVBoxLayout(preview_group)
+        # Use saved appearance font size as initial font size
+        initial_font = self._app.get("font_size", 9)
+        initial_fields = self._saved_fields if self._saved_fields else [f.name() for f in self._layer.fields()]
+        self._preview = PreviewWidget(
+            layer=self._layer,
+            feature=self._feature,
+            fields=initial_fields,
+            appearance=self._app,
+            font_size=initial_font,
+            null_display=self._null_display,
+            parent=self,
+        )
+        pg_layout.addWidget(self._preview)
+        content_layout.addWidget(preview_group)
 
         # ---- Appearance (collapsible toggle) ----
         app_toggle = QToolButton()
@@ -273,6 +777,28 @@ class FieldSelectionDialog(QDialog):
             app_layout.addWidget(row_w)
 
         # Font family
+        # Preset selector (Custom + presets)
+        self._preset_combo = QComboBox()
+        self._preset_combo.addItem("Custom", None)
+        for p in _APPEARANCE_PRESETS:
+            try:
+                self._preset_combo.addItem(p.get("name", "Preset"), p.get("values"))
+            except Exception:
+                pass
+        self._preset_combo.setMaximumWidth(220)
+        _row("Preset:", self._preset_combo)
+
+        def _preset_changed(idx):
+            if getattr(self, "_applying_preset", False):
+                return
+            vals = self._preset_combo.itemData(idx)
+            if not vals:
+                return
+            self._apply_preset(vals)
+
+        self._preset_combo.currentIndexChanged.connect(_preset_changed)
+
+        # Font family
         self._font_combo = QComboBox()
         families = sorted(set(QFontDatabase().families()))
         self._font_combo.addItem("(system default)", "")
@@ -284,7 +810,6 @@ class FieldSelectionDialog(QDialog):
         self._font_combo.setMaximumWidth(200)
         _row("Font family:", self._font_combo)
 
-        # Font size
         self._font_spin = QSpinBox()
         self._font_spin.setRange(6, 28)
         self._font_spin.setValue(self._app.get("font_size", 9))
@@ -383,6 +908,16 @@ class FieldSelectionDialog(QDialog):
         self._leader_combo.setMaximumWidth(120)
         _row("Leader line style:", self._leader_combo)
 
+        # Orientation (horizontal = fields across; vertical = fields down)
+        self._orientation_combo = QComboBox()
+        self._orientation_combo.addItem("Horizontal", "horizontal")
+        self._orientation_combo.addItem("Vertical", "vertical")
+        saved_orient = self._app.get("orientation", "horizontal")
+        oi = self._orientation_combo.findData(saved_orient)
+        self._orientation_combo.setCurrentIndex(oi if oi >= 0 else 0)
+        self._orientation_combo.setMaximumWidth(160)
+        _row("Orientation:", self._orientation_combo)
+
         # Reset to defaults button
         def _reset_defaults():
             d = dict(_DEFAULT_APPEARANCE)
@@ -408,6 +943,9 @@ class FieldSelectionDialog(QDialog):
                 self._placement_buttons[dp].setChecked(True)
             # sizing defaults were removed — only map-scaling is supported
 
+            li3 = self._orientation_combo.findData(d.get("orientation", "horizontal"))
+            self._orientation_combo.setCurrentIndex(li3 if li3 >= 0 else 0)
+
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.setMaximumWidth(150)
         reset_btn.clicked.connect(_reset_defaults)
@@ -418,6 +956,53 @@ class FieldSelectionDialog(QDialog):
         app_layout.addWidget(self._remember_app_cb)
 
         content_layout.addWidget(self._app_container)
+
+        # Connect preview update signals
+        for cb in self._checkboxes.values():
+            try:
+                cb.toggled.connect(self._update_preview)
+            except Exception:
+                pass
+
+        # Appearance controls
+        try:
+            self._font_combo.currentIndexChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        try:
+            self._font_spin.valueChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        try:
+            self._orientation_combo.currentIndexChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        for btn in (self._btn_header_bg, self._btn_header_fg, self._btn_value_bg, self._btn_value_bg_alt,
+                    self._btn_value_fg, self._btn_grid, self._btn_border, self._btn_anchor):
+            try:
+                btn.clicked.connect(self._update_preview)
+            except Exception:
+                pass
+        try:
+            self._corner_spin.valueChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        for btn in self._placement_buttons.values():
+            try:
+                btn.toggled.connect(self._update_preview)
+            except Exception:
+                pass
+        try:
+            self._shadow_cb.toggled.connect(self._update_preview)
+            self._anchor_cb.toggled.connect(self._update_preview)
+            self._leader_combo.currentIndexChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        # Ensure reset button also refreshes preview
+        try:
+            reset_btn.clicked.connect(self._update_preview)
+        except Exception:
+            pass
 
         # Finish scroll area and add it to the dialog; buttons remain fixed below
         main_scroll.setWidget(content)
@@ -441,23 +1026,137 @@ class FieldSelectionDialog(QDialog):
         root.addLayout(bottom)
 
     # ------------------------------------------------------------------
+    def _apply_preset(self, vals: dict):
+        """Apply a preset appearance dict to all appearance controls."""
+        if not isinstance(vals, dict):
+            return
+        self._applying_preset = True
+        try:
+            fam = vals.get("font_family", "")
+            if fam:
+                idx = self._font_combo.findData(fam)
+                if idx >= 0:
+                    self._font_combo.setCurrentIndex(idx)
+                else:
+                    self._font_combo.setCurrentIndex(0)
+            else:
+                self._font_combo.setCurrentIndex(0)
+
+            try:
+                self._font_spin.setValue(int(vals.get("font_size", self._font_spin.value())))
+            except Exception:
+                pass
+
+            # Colours
+            try:
+                self._btn_header_bg._color = QColor(vals.get("header_bg", self._btn_header_bg._color.name()))
+                self._btn_header_bg._update_icon()
+                self._btn_header_fg._color = QColor(vals.get("header_fg", self._btn_header_fg._color.name()))
+                self._btn_header_fg._update_icon()
+                self._btn_value_bg._color = QColor(vals.get("value_bg", self._btn_value_bg._color.name()))
+                self._btn_value_bg._update_icon()
+                self._btn_value_bg_alt._color = QColor(vals.get("value_bg_alt", self._btn_value_bg_alt._color.name()))
+                self._btn_value_bg_alt._update_icon()
+                self._btn_value_fg._color = QColor(vals.get("value_fg", self._btn_value_fg._color.name()))
+                self._btn_value_fg._update_icon()
+                self._btn_grid._color = QColor(vals.get("grid_color", self._btn_grid._color.name()))
+                self._btn_grid._update_icon()
+                self._btn_border._color = QColor(vals.get("border_color", self._btn_border._color.name()))
+                self._btn_border._update_icon()
+                self._btn_anchor._color = QColor(vals.get("anchor_color", self._btn_anchor._color.name()))
+                self._btn_anchor._update_icon()
+            except Exception:
+                pass
+
+            try:
+                self._corner_spin.setValue(int(vals.get("corner_radius", self._corner_spin.value())))
+            except Exception:
+                pass
+
+            try:
+                self._shadow_cb.setChecked(bool(vals.get("shadow", self._shadow_cb.isChecked())))
+            except Exception:
+                pass
+
+            try:
+                self._anchor_cb.setChecked(bool(vals.get("show_anchor", self._anchor_cb.isChecked())))
+            except Exception:
+                pass
+
+            try:
+                li = self._leader_combo.findData(vals.get("leader_style", self._leader_combo.currentData()))
+                if li >= 0:
+                    self._leader_combo.setCurrentIndex(li)
+            except Exception:
+                pass
+
+            try:
+                p = vals.get("placement", self._placement_buttons and next(iter(self._placement_buttons), "top"))
+                if p in self._placement_buttons:
+                    self._placement_buttons[p].setChecked(True)
+            except Exception:
+                pass
+
+            try:
+                oi = self._orientation_combo.findData(vals.get("orientation", self._orientation_combo.currentData()))
+                if oi >= 0:
+                    self._orientation_combo.setCurrentIndex(oi)
+            except Exception:
+                pass
+
+        finally:
+            self._applying_preset = False
+        try:
+            self._update_preview()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     def _restore_selection(self):
-        if self._saved_fields:
-            for name, cb in self._checkboxes.items():
-                cb.setChecked(name in self._saved_fields)
+        # Restore order-aware selection into the fields list
+        if getattr(self, "_fields_list", None):
+            if self._saved_fields:
+                chosen = set(self._saved_fields)
+                for i in range(self._fields_list.count()):
+                    it = self._fields_list.item(i)
+                    it.setCheckState(Qt.Checked if it.text() in chosen else Qt.Unchecked)
+            else:
+                for i in range(self._fields_list.count()):
+                    self._fields_list.item(i).setCheckState(Qt.Checked)
+        else:
+            # Fallback to old behaviour
+            if self._saved_fields:
+                for name, cb in self._checkboxes.items():
+                    cb.setChecked(name in self._saved_fields)
+            else:
+                for cb in self._checkboxes.values():
+                    cb.setChecked(True)
+
+    def _select_all(self):
+        if getattr(self, "_fields_list", None):
+            for i in range(self._fields_list.count()):
+                self._fields_list.item(i).setCheckState(Qt.Checked)
         else:
             for cb in self._checkboxes.values():
                 cb.setChecked(True)
 
-    def _select_all(self):
-        for cb in self._checkboxes.values():
-            cb.setChecked(True)
-
     def _select_none(self):
-        for cb in self._checkboxes.values():
-            cb.setChecked(False)
+        if getattr(self, "_fields_list", None):
+            for i in range(self._fields_list.count()):
+                self._fields_list.item(i).setCheckState(Qt.Unchecked)
+        else:
+            for cb in self._checkboxes.values():
+                cb.setChecked(False)
 
     def selected_fields(self):
+        # Return fields in current visual order, respecting checked state
+        if getattr(self, "_fields_list", None):
+            res = []
+            for i in range(self._fields_list.count()):
+                it = self._fields_list.item(i)
+                if it.checkState() == Qt.Checked:
+                    res.append(it.text())
+            return res
         return [n for n, cb in self._checkboxes.items() if cb.isChecked()]
 
     def should_remember(self):
@@ -488,10 +1187,28 @@ class FieldSelectionDialog(QDialog):
                 (pid for pid, btn in self._placement_buttons.items() if btn.isChecked()),
                 "top"
             ),
+            "orientation":     self._orientation_combo.currentData(),
             # Note: only map-scaling mode is currently supported. Fixed-screen
             # sizing was removed because it produced inconsistent results
             # across QGIS canvas repaints. Re-introduce in future as needed.
         }
+    def _update_preview(self):
+        """Refresh the live preview widget to reflect current selection/state."""
+        if not getattr(self, "_preview", None):
+            return
+        try:
+            fields = self.selected_fields()
+            # Use the representative feature of the dialog as the sample
+            feature = getattr(self, "_feature", None)
+            self._preview.set_fields(fields)
+            self._preview.set_feature(feature)
+            app = self.get_appearance()
+            self._preview.set_appearance(app)
+            self._preview.set_font_size(app.get("font_size", self._app.get("font_size", 9)))
+            self._preview.set_null_display(getattr(self, "_null_display", "NULL"))
+            self._preview.update()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +1241,13 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         self._layer       = layer
         self._fields      = fields
         self._null_display = null_display
+
+        # Keep feature id for live re-querying during render; keep feature
+        # snapshot as a fallback so behaviour is unchanged if re-query fails.
+        try:
+            self._fid = int(feature.id()) if feature is not None else None
+        except Exception:
+            self._fid = None
 
         self._app = dict(_DEFAULT_APPEARANCE)
         if appearance:
@@ -691,6 +1415,29 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         leader_style = app.get("leader_style", "dot")
         placement    = app.get("placement", "top")
 
+        # Attempt to fetch a live copy of the feature so attribute edits
+        # made in the layer or attribute table are reflected immediately.
+        live_feature = None
+        if getattr(self, "_fid", None) is not None and getattr(self, "_layer", None) is not None:
+            try:
+                from qgis.core import QgsFeatureRequest
+                for f in self._layer.getFeatures(QgsFeatureRequest().setFilterFid(self._fid)):
+                    live_feature = f
+                    break
+            except Exception:
+                live_feature = None
+
+        def _raw_attr(field_name):
+            if live_feature is not None:
+                try:
+                    return live_feature[field_name]
+                except Exception:
+                    pass
+            try:
+                return self._feature[field_name]
+            except Exception:
+                return None
+
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
 
@@ -707,22 +1454,43 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         pad_x = max(4, fm_h.averageCharWidth())
         pad_y = max(2, fm_h.descent() + 1)
         row_h = max(fm_h.height(), fm_v.height()) + 2 * pad_y
-
-        # Column widths
+        # Column widths / layout (support horizontal and vertical orientations)
         min_col_w = fm_v.averageCharWidth() * 7
         max_col_w = fm_v.averageCharWidth() * 28
-        col_widths = []
-        for field_name in self._fields:
-            raw      = self._feature[field_name]
-            val_text = self._fmt_value(raw, self._null_display)
-            w_h = fm_h.horizontalAdvance(field_name) + 2 * pad_x
-            w_v = fm_v.horizontalAdvance(val_text)   + 2 * pad_x
-            cw  = max(w_h, w_v, min_col_w)
-            cw  = min(cw, max_col_w)
-            col_widths.append(cw)
+        orientation = app.get("orientation", "horizontal")
 
-        table_w = sum(col_widths)
-        table_h = 2 * row_h
+        if orientation == "horizontal":
+            col_widths = []
+            for field_name in self._fields:
+                raw      = _raw_attr(field_name)
+                val_text = self._fmt_value(raw, self._null_display)
+                w_h = fm_h.horizontalAdvance(field_name) + 2 * pad_x
+                w_v = fm_v.horizontalAdvance(val_text)   + 2 * pad_x
+                cw  = max(w_h, w_v, min_col_w)
+                cw  = min(cw, max_col_w)
+                col_widths.append(cw)
+
+            table_w = sum(col_widths)
+            table_h = 2 * row_h
+        else:
+            # Vertical: single label column (header style) + value column
+            label_widths = []
+            value_widths = []
+            for field_name in self._fields:
+                raw      = _raw_attr(field_name)
+                val_text = self._fmt_value(raw, self._null_display)
+                w_label = fm_h.horizontalAdvance(field_name) + 2 * pad_x
+                w_val   = fm_v.horizontalAdvance(val_text)   + 2 * pad_x
+                label_widths.append(w_label)
+                value_widths.append(w_val)
+
+            left_col_w = max(max(label_widths) if label_widths else min_col_w, min_col_w)
+            right_col_w = max(max(value_widths) if value_widths else min_col_w, min_col_w)
+            left_col_w = min(left_col_w, max_col_w)
+            right_col_w = min(right_col_w, max_col_w)
+
+            table_w = left_col_w + right_col_w
+            table_h = row_h * max(1, len(self._fields))
 
         # Leader line and anchor dot sizes: proportional to font height so
         # they look correct at any DPI (screen 96 or print 300+)
@@ -747,51 +1515,100 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         table_path.addRoundedRect(QRectF(tx, ty, table_w, table_h), corner_r, corner_r)
         painter.setClipPath(table_path)
 
-        # ---- Header background ----
+        # ---- Header / cells drawing ----
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(header_bg))
-        painter.drawRect(QRectF(tx, ty, table_w, row_h))
+        if orientation == "horizontal":
+            # Header full-width
+            painter.setBrush(QBrush(header_bg))
+            painter.drawRect(QRectF(tx, ty, table_w, row_h))
 
-        # ---- Value row alternating fills ----
-        x = tx
-        for ci, cw in enumerate(col_widths):
-            bg = value_bg_alt if ci % 2 == 0 else value_bg
-            painter.setBrush(QBrush(bg))
-            painter.drawRect(QRectF(x, ty + row_h, cw, row_h))
-            x += cw
+            # Value row alternating fills
+            x = tx
+            for ci, cw in enumerate(col_widths):
+                bg = value_bg_alt if ci % 2 == 0 else value_bg
+                painter.setBrush(QBrush(bg))
+                painter.drawRect(QRectF(x, ty + row_h, cw, row_h))
+                x += cw
 
-        # ---- Grid lines ----
-        painter.setPen(QPen(grid_color, 0.8))
-        x = tx
-        for cw in col_widths[:-1]:
-            x += cw
-            painter.drawLine(QPointF(x, ty), QPointF(x, ty + table_h))
-        painter.drawLine(QPointF(tx, ty + row_h), QPointF(tx + table_w, ty + row_h))
+            # Grid lines
+            painter.setPen(QPen(grid_color, 0.8))
+            x = tx
+            for cw in col_widths[:-1]:
+                x += cw
+                painter.drawLine(QPointF(x, ty), QPointF(x, ty + table_h))
+            painter.drawLine(QPointF(tx, ty + row_h), QPointF(tx + table_w, ty + row_h))
 
-        # ---- Text (disable clip so text isn't cut at column edges) ----
-        painter.setClipping(False)
+            # Text (disable clip so text isn't cut at column edges)
+            painter.setClipping(False)
 
-        painter.setFont(header_font)
-        painter.setPen(QPen(header_fg))
-        x = tx
-        for ci, field_name in enumerate(self._fields):
-            cw        = col_widths[ci]
-            cell_rect = QRectF(x, ty, cw, row_h)
-            elided    = fm_h.elidedText(field_name, Qt.ElideRight, int(cw) - 4)
-            painter.drawText(cell_rect, Qt.AlignCenter, elided)
-            x += cw
+            painter.setFont(header_font)
+            painter.setPen(QPen(header_fg))
+            x = tx
+            for ci, field_name in enumerate(self._fields):
+                cw        = col_widths[ci]
+                cell_rect = QRectF(x, ty, cw, row_h)
+                elided    = fm_h.elidedText(field_name, Qt.ElideRight, int(cw) - 4)
+                painter.drawText(cell_rect, Qt.AlignCenter, elided)
+                x += cw
 
-        painter.setFont(value_font)
-        painter.setPen(QPen(value_fg))
-        x = tx
-        for ci, field_name in enumerate(self._fields):
-            cw        = col_widths[ci]
-            raw       = self._feature[field_name]
-            val_text  = self._fmt_value(raw, self._null_display)
-            cell_rect = QRectF(x, ty + row_h, cw, row_h)
-            elided    = fm_v.elidedText(val_text, Qt.ElideRight, int(cw) - 4)
-            painter.drawText(cell_rect, Qt.AlignCenter, elided)
-            x += cw
+            painter.setFont(value_font)
+            painter.setPen(QPen(value_fg))
+            x = tx
+            for ci, field_name in enumerate(self._fields):
+                cw        = col_widths[ci]
+                raw       = _raw_attr(field_name)
+                val_text  = self._fmt_value(raw, self._null_display)
+                cell_rect = QRectF(x, ty + row_h, cw, row_h)
+                elided    = fm_v.elidedText(val_text, Qt.ElideRight, int(cw) - 4)
+                painter.drawText(cell_rect, Qt.AlignCenter, elided)
+                x += cw
+        else:
+            # Vertical layout: left label column uses header style; right column shows values
+            left_w = left_col_w
+            right_w = right_col_w
+
+            # Left column background (header style)
+            painter.setBrush(QBrush(header_bg))
+            painter.drawRect(QRectF(tx, ty, left_w, table_h))
+
+            # Right column alternating row fills
+            y = ty
+            for ri in range(len(self._fields)):
+                bg = value_bg_alt if ri % 2 == 0 else value_bg
+                painter.setBrush(QBrush(bg))
+                painter.drawRect(QRectF(tx + left_w, y, right_w, row_h))
+                y += row_h
+
+            # Grid lines: vertical divider + horizontal row dividers
+            painter.setPen(QPen(grid_color, 0.8))
+            painter.drawLine(QPointF(tx + left_w, ty), QPointF(tx + left_w, ty + table_h))
+            y = ty
+            for ri in range(1, len(self._fields)):
+                y += row_h
+                painter.drawLine(QPointF(tx, y), QPointF(tx + table_w, y))
+
+            painter.setClipping(False)
+
+            # Draw label (left) and value (right) text per row
+            painter.setFont(header_font)
+            painter.setPen(QPen(header_fg))
+            y = ty
+            for ri, field_name in enumerate(self._fields):
+                cell_rect = QRectF(tx, y, left_w, row_h)
+                elided = fm_h.elidedText(field_name, Qt.ElideRight, int(left_w) - 4)
+                painter.drawText(cell_rect, Qt.AlignCenter, elided)
+                y += row_h
+
+            painter.setFont(value_font)
+            painter.setPen(QPen(value_fg))
+            y = ty
+            for ri, field_name in enumerate(self._fields):
+                raw = _raw_attr(field_name)
+                val_text = self._fmt_value(raw, self._null_display)
+                cell_rect = QRectF(tx + left_w, y, right_w, row_h)
+                elided = fm_v.elidedText(val_text, Qt.ElideRight, int(right_w) - 4)
+                painter.drawText(cell_rect, Qt.AlignCenter, elided)
+                y += row_h
 
         # ---- Outer border ----
         painter.setPen(QPen(border_color, 1.5))
@@ -1058,6 +1875,7 @@ class ShowPointAttributeTableAction(BaseAction):
             feature=feature,
             saved_fields=saved_fields,
             saved_appearance=_load_saved_appearance(),
+            null_display=null_display,
             parent=parent_widget
         )
         if sel_dlg.exec_() != QDialog.Accepted:

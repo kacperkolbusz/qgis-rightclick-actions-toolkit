@@ -1,14 +1,16 @@
 """
-Show Point Layer Attribute Table Action for Right-click Utilities and Shortcuts Hub
+Show Polygon Attribute Table Action for Right-click Utilities and Shortcuts Hub
 
-Renders an Excel-like two-row attribute table directly on the map canvas
-for EVERY point in the clicked layer.  Each annotation is anchored to its
-point's geographic coordinates and moves with the map on pan/zoom — just
-like the single-feature version, but applied to all features at once.
+Renders an Excel-like two-row attribute table directly on the map canvas,
+anchored to the polygon feature's centroid coordinates.  The table moves
+with the map when the user pans or zooms - it behaves like a map annotation.
 
-Triggering the action on a layer that already has annotations removes all
-of them (toggle behaviour).  Undo removes all placed annotations at once;
-redo recreates them.
+Field names appear in a dark-orange header row; values appear in the row below.
+A small leader line connects the annotation to the polygon centroid.
+
+Triggering the action on the same feature a second time removes its annotation.
+Triggering on a different feature adds a second annotation (multi-polygon support).
+Undo removes the annotation; redo re-places it.
 """
 
 from .base_action import BaseAction
@@ -17,12 +19,12 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QCheckBox, QScrollArea, QWidget, QFrame, QApplication,
     QGroupBox, QSpinBox, QComboBox, QToolButton, QSizePolicy,
-    QColorDialog, QMessageBox, QListWidget, QListWidgetItem, QAbstractItemView,
+    QColorDialog, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from qgis.PyQt.QtCore import Qt, QSettings, QRectF, QPointF
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPainter, QPen, QBrush, QPainterPath,
-    QFontDatabase, QPixmap, QIcon,
+    QFontDatabase, QPixmap, QIcon
 )
 from qgis.core import (
     QgsWkbTypes, QgsPointXY, QgsRectangle,
@@ -38,13 +40,13 @@ from qgis.utils import iface
 _DEFAULT_APPEARANCE = {
     "font_family":    "",          # "" = system default
     "font_size":      9,
-    "header_bg":      "#217346",
+    "header_bg":      "#C05020",
     "header_fg":      "#FFFFFF",
     "value_bg":       "#FFFFFF",
-    "value_bg_alt":   "#EAF4EE",
+    "value_bg_alt":   "#FAF0EA",
     "grid_color":     "#B0B0B0",
-    "border_color":   "#155A30",
-    "anchor_color":   "#217346",
+    "border_color":   "#7A3010",
+    "anchor_color":   "#C05020",
     "value_fg":       "#111111",
     "shadow":         True,
     "corner_radius":  5,
@@ -52,9 +54,8 @@ _DEFAULT_APPEARANCE = {
     "show_anchor":    True,        # draw leader line + anchor dot
     "placement":      "top",       # top | bottom | left | right | top-left | top-right | bottom-left | bottom-right
     "orientation":    "horizontal", # horizontal | vertical
+    "polygon_anchor": "centroid",   # centroid | north | south | east | west | north_east | north_west | south_east | south_west
 }
-
-# NOTE: a future enhancement could expose a fixed-screen sizing mode here.
 
 _LEADER_STYLES = ["dot", "dash", "solid", "none"]
 
@@ -70,12 +71,10 @@ _PLACEMENT_CELLS = [
     ("↓", "bottom",       2, 1),
     ("↘", "bottom-right", 2, 2),
 ]
-
-# Shared with the single-feature action so appearance settings are global
-_APPEARANCE_SETTINGS_KEY = "RightClickUtilities/show_point_attribute_table/appearance"
+_APPEARANCE_SETTINGS_KEY = "RightClickUtilities/show_polygon_attribute_table/appearance"
 
 
-# Pre-defined appearance presets. Add further presets here as needed.
+# Pre-defined appearance presets.
 _APPEARANCE_PRESETS = [
     {"name": "Default Classic", "values": dict(_DEFAULT_APPEARANCE)},
     {
@@ -110,7 +109,7 @@ _APPEARANCE_PRESETS = [
             "value_bg_alt": "#FAFAFA",
             "grid_color": "#E0E0E0",
             "border_color": "#D0D0D0",
-            "anchor_color": "#217346",
+            "anchor_color": "#C05020",
             "value_fg": "#111111",
             "shadow": False,
             "corner_radius": 4,
@@ -209,13 +208,13 @@ _APPEARANCE_PRESETS = [
         "values": {
             "font_family": "",
             "font_size": 7,
-            "header_bg": "#2E7D32",
+            "header_bg": "#C05020",
             "header_fg": "#FFFFFF",
             "value_bg": "#FFFFFF",
-            "value_bg_alt": "#F3F7F3",
-            "grid_color": "#C8E6C9",
-            "border_color": "#A5D6A7",
-            "anchor_color": "#2E7D32",
+            "value_bg_alt": "#FAF0EA",
+            "grid_color": "#F2C8B0",
+            "border_color": "#E0A080",
+            "anchor_color": "#C05020",
             "value_fg": "#111111",
             "shadow": False,
             "corner_radius": 3,
@@ -230,13 +229,13 @@ _APPEARANCE_PRESETS = [
         "values": {
             "font_family": "",
             "font_size": 14,
-            "header_bg": "#1B5E20",
+            "header_bg": "#7A3010",
             "header_fg": "#FFFFFF",
             "value_bg": "#FFFFFF",
-            "value_bg_alt": "#E8F5E9",
-            "grid_color": "#C8E6C9",
-            "border_color": "#2E7D32",
-            "anchor_color": "#388E3C",
+            "value_bg_alt": "#FFF0E6",
+            "grid_color": "#F2C8B0",
+            "border_color": "#C05020",
+            "anchor_color": "#C05020",
             "value_fg": "#111111",
             "shadow": True,
             "corner_radius": 8,
@@ -288,8 +287,6 @@ _APPEARANCE_PRESETS = [
             "orientation": "horizontal",
         },
     },
-
-    # Additional presets
     {
         "name": "Neon Glow",
         "values": {
@@ -461,9 +458,6 @@ _APPEARANCE_PRESETS = [
 ]
 
 
-# Presets consolidated above; duplicate removed.
-
-
 def _load_saved_appearance():
     """Load persisted appearance from QSettings, falling back to defaults."""
     try:
@@ -471,6 +465,7 @@ def _load_saved_appearance():
         if isinstance(raw, dict):
             result = dict(_DEFAULT_APPEARANCE)
             result.update({k: v for k, v in raw.items() if k in result})
+            # Ensure numeric types are correct (QSettings may return strings)
             result["font_size"]     = int(result["font_size"])
             result["corner_radius"] = int(result["corner_radius"])
             result["shadow"]      = str(result["shadow"]).lower()      not in ("false", "0", "no")
@@ -479,6 +474,11 @@ def _load_saved_appearance():
                 result["placement"] = "top"
             if result.get("orientation") not in ("horizontal", "vertical"):
                 result["orientation"] = "horizontal"
+            if result.get("polygon_anchor") not in {
+                "centroid", "north", "south", "east", "west",
+                "north_east", "north_west", "south_east", "south_west"
+            }:
+                result["polygon_anchor"] = "centroid"
             return result
     except Exception:
         pass
@@ -490,6 +490,66 @@ def _save_appearance(app):
         QSettings().setValue(_APPEARANCE_SETTINGS_KEY, app)
     except Exception:
         pass
+
+
+# (anchor_id, display_label) for the polygon anchor combo
+_POLYGON_ANCHOR_OPTIONS = [
+    ("centroid",   "⊙ Centroid"),
+    ("north",      "↑ Northernmost vertex"),
+    ("south",      "↓ Southernmost vertex"),
+    ("east",       "→ Easternmost vertex"),
+    ("west",       "← Westernmost vertex"),
+    ("north_east", "↗ Northeasternmost vertex"),
+    ("north_west", "↖ Northwesternmost vertex"),
+    ("south_east", "↘ Southeasternmost vertex"),
+    ("south_west", "↙ Southwesternmost vertex"),
+]
+
+
+def _get_polygon_anchor_point(geom, anchor_type):
+    """Return a QgsPointXY for the polygon anchor based on anchor_type.
+
+    Cardinal directions (N/S/E/W) find the actual vertex with the extreme
+    coordinate.  Diagonal directions (NE/NW/SE/SW) find the vertex most
+    extreme in the combined diagonal direction (maximises/minimises x±y).
+    Falls back to centroid on any error.
+    """
+    def _centroid_fallback():
+        try:
+            c = geom.centroid()
+            if c and not c.isEmpty():
+                return c.asPoint()
+        except Exception:
+            pass
+        return QgsPointXY(0, 0)
+
+    if not anchor_type or anchor_type == "centroid":
+        return _centroid_fallback()
+    try:
+        vertices = list(geom.vertices())
+        if not vertices:
+            return _centroid_fallback()
+        if anchor_type == "north":
+            v = max(vertices, key=lambda p: p.y())
+        elif anchor_type == "south":
+            v = min(vertices, key=lambda p: p.y())
+        elif anchor_type == "east":
+            v = max(vertices, key=lambda p: p.x())
+        elif anchor_type == "west":
+            v = min(vertices, key=lambda p: p.x())
+        elif anchor_type == "north_east":
+            v = max(vertices, key=lambda p: p.x() + p.y())
+        elif anchor_type == "north_west":
+            v = max(vertices, key=lambda p: -p.x() + p.y())
+        elif anchor_type == "south_east":
+            v = max(vertices, key=lambda p: p.x() - p.y())
+        elif anchor_type == "south_west":
+            v = min(vertices, key=lambda p: p.x() + p.y())
+        else:
+            return _centroid_fallback()
+        return QgsPointXY(v.x(), v.y())
+    except Exception:
+        return _centroid_fallback()
 
 
 def _make_color_button(color_hex: str, parent=None):
@@ -513,7 +573,7 @@ def _make_color_button(color_hex: str, parent=None):
             _update_icon()
 
     btn.clicked.connect(_pick)
-    btn._update_icon = _update_icon
+    btn._update_icon = _update_icon   # expose for external refresh
     return btn
 
 
@@ -542,7 +602,11 @@ class ReorderableListWidget(QListWidget):
 
 
 class PreviewWidget(QWidget):
-    """Widget to render a live sample of the attribute-table annotation."""
+    """Small widget that renders a sample attribute-table annotation.
+
+    It instantiates an PolygonAttributeTableAnnotationItem at runtime and calls
+    its drawing helper so the preview matches the on-map rendering.
+    """
 
     def __init__(self, layer, feature, fields=None, appearance=None, font_size=9, null_display="NULL", parent=None):
         super().__init__(parent)
@@ -586,8 +650,9 @@ class PreviewWidget(QWidget):
             painter.drawText(rect, Qt.AlignCenter, "Preview\n(no fields selected)")
             return
         try:
+            # Create a lightweight annotation item and let it draw itself
             map_point = QgsPointXY(0, 0)
-            item = AttributeTableAnnotationItem(
+            item = PolygonAttributeTableAnnotationItem(
                 map_point=map_point,
                 feature=self._feature,
                 layer=self._layer,
@@ -597,6 +662,7 @@ class PreviewWidget(QWidget):
                 appearance=self._appearance,
             )
             painter.save()
+            # Translate painter so the anchor dot is centered in the widget
             painter.translate(rect.width() / 2.0, rect.height() / 2.0)
             item._draw_table(painter)
             painter.restore()
@@ -608,20 +674,18 @@ class PreviewWidget(QWidget):
 # Field Selection + Appearance Dialog
 # ---------------------------------------------------------------------------
 
-class FieldSelectionDialog(QDialog):
+class PolygonFieldSelectionDialog(QDialog):
     """Lets the user pick which fields to display and customise table appearance."""
 
-    def __init__(self, layer, feature, features=None, saved_fields=None, saved_appearance=None, null_display="NULL", parent=None):
+    def __init__(self, layer, feature, saved_fields=None, saved_appearance=None, null_display="NULL", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Attribute Table on Map")
         self.setModal(True)
         # Make the dialog wider by default so controls can be laid out horizontally
         self.setMinimumWidth(760)
 
-        self._layer        = layer
-        self._feature      = feature
-        # List of QgsFeature objects offered for selection (may be truncated)
-        self._features     = features or []
+        self._layer   = layer
+        self._feature = feature
         self._checkboxes   = {}
         self._saved_fields = saved_fields or []
         self._app = dict(saved_appearance) if saved_appearance else _load_saved_appearance()
@@ -629,8 +693,7 @@ class FieldSelectionDialog(QDialog):
 
         self._setup_ui()
         self._restore_selection()
-        # Feature selection defaults
-        self._restore_feature_selection()
+        # Ensure preview matches restored selection + appearance
         try:
             self._update_preview()
         except Exception:
@@ -642,8 +705,7 @@ class FieldSelectionDialog(QDialog):
         root.setSpacing(8)
         root.setContentsMargins(12, 12, 12, 12)
 
-        # Put main content into a scroll area so the dialog can be wider
-        # instead of very tall; keep action buttons fixed below.
+        # Place main content in a scroll area so dialog stays reasonably sized
         main_scroll = QScrollArea()
         main_scroll.setWidgetResizable(True)
         main_scroll.setFrameShape(QFrame.NoFrame)
@@ -672,72 +734,13 @@ class FieldSelectionDialog(QDialog):
         sep.setFrameShadow(QFrame.Sunken)
         content_layout.addWidget(sep)
 
-        # ---- Points / Features ----
-        points_group = QGroupBox("Points to annotate")
-        pg_layout = QVBoxLayout(points_group)
-        pg_layout.setContentsMargins(6, 6, 6, 6)
-        pg_layout.setSpacing(4)
-
-        # Reorderable list of features with checkboxes
-        self._feature_list = ReorderableListWidget(on_reorder=self._update_preview, parent=self)
-        self._feature_list.setSelectionMode(QListWidget.SingleSelection)
-        self._feature_list.setMinimumHeight(150)
-        self._feature_list.setMaximumHeight(230)
-        # Map fid -> feature for quick lookup
-        self._feature_by_fid = {}
-        for feat in self._features:
-            fid = int(feat.id())
-            preview = []
-            cnt = 0
-            for f in self._layer.fields():
-                if cnt >= 2:
-                    break
-                val = feat[f.name()]
-                if val is None or (hasattr(val, "isNull") and val.isNull()):
-                    vstr = ""
-                else:
-                    vstr = str(val)
-                if vstr:
-                    preview.append(f"{f.name()}={vstr[:30]}")
-                cnt += 1
-            label = f"FID {fid}"
-            if preview:
-                label += "  —  " + ", ".join(preview)
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            item.setCheckState(Qt.Checked)
-            item.setData(Qt.UserRole, fid)
-            item.setToolTip(f"Feature ID: {fid}")
-            self._feature_list.addItem(item)
-            self._feature_by_fid[fid] = feat
-
-        try:
-            self._feature_list.itemChanged.connect(self._update_preview)
-        except Exception:
-            pass
-
-        pg_layout.addWidget(self._feature_list)
-
-        feat_btn_row = QHBoxLayout()
-        feat_select_all = QPushButton("Select All")
-        feat_select_all.setMaximumWidth(100)
-        feat_select_all.clicked.connect(self._select_all_features)
-        feat_select_none = QPushButton("Select None")
-        feat_select_none.setMaximumWidth(100)
-        feat_select_none.clicked.connect(self._select_none_features)
-        feat_btn_row.addWidget(feat_select_all)
-        feat_btn_row.addWidget(feat_select_none)
-        feat_btn_row.addStretch()
-        pg_layout.addLayout(feat_btn_row)
-
-        content_layout.addWidget(points_group)
-
         # ---- Fields ----
         fields_group = QGroupBox("Fields to display")
         fg_layout = QVBoxLayout(fields_group)
         fg_layout.setContentsMargins(6, 6, 6, 6)
         fg_layout.setSpacing(4)
 
+        # Reorderable, checkable list of fields
         self._fields_list = ReorderableListWidget(on_reorder=self._update_preview, parent=self)
         self._fields_list.setSelectionMode(QListWidget.SingleSelection)
         self._fields_list.setMinimumHeight(150)
@@ -755,6 +758,7 @@ class FieldSelectionDialog(QDialog):
             item.setToolTip(f"Type: {field.typeName()}  |  Value: {tip_val}")
             self._fields_list.addItem(item)
 
+        # Update preview when check state changes
         try:
             self._fields_list.itemChanged.connect(self._update_preview)
         except Exception:
@@ -762,8 +766,8 @@ class FieldSelectionDialog(QDialog):
 
         fg_layout.addWidget(self._fields_list)
 
-        btn_row  = QHBoxLayout()
-        btn_all  = QPushButton("Select All")
+        btn_row = QHBoxLayout()
+        btn_all = QPushButton("Select All")
         btn_all.setMaximumWidth(100)
         btn_all.clicked.connect(self._select_all)
         btn_none = QPushButton("Select None")
@@ -783,6 +787,7 @@ class FieldSelectionDialog(QDialog):
         # ---- Live Preview ----
         preview_group = QGroupBox("Live Preview")
         pg_layout = QVBoxLayout(preview_group)
+        # Use saved appearance font size as initial font size
         initial_font = self._app.get("font_size", 9)
         initial_fields = self._saved_fields if self._saved_fields else [f.name() for f in self._layer.fields()]
         self._preview = PreviewWidget(
@@ -807,7 +812,6 @@ class FieldSelectionDialog(QDialog):
         app_toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
         app_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         content_layout.addWidget(app_toggle)
-
         self._app_container = QWidget()
         # Expanded by default
         self._app_container.setVisible(True)
@@ -822,18 +826,19 @@ class FieldSelectionDialog(QDialog):
 
         app_toggle.toggled.connect(_toggle_appearance)
 
+        # helper: add a 2-column row to appearance grid
         def _row(label_text, widget):
             row_w = QWidget()
-            hl    = QHBoxLayout(row_w)
+            hl = QHBoxLayout(row_w)
             hl.setContentsMargins(0, 0, 0, 0)
-            lbl   = QLabel(label_text)
+            lbl = QLabel(label_text)
             lbl.setFixedWidth(140)
             hl.addWidget(lbl)
             hl.addWidget(widget)
             hl.addStretch()
             app_layout.addWidget(row_w)
 
-        # Preset selector (Custom + presets)
+        # Preset selector
         self._preset_combo = QComboBox()
         self._preset_combo.addItem("Custom", None)
         for p in _APPEARANCE_PRESETS:
@@ -866,7 +871,6 @@ class FieldSelectionDialog(QDialog):
         self._font_combo.setMaximumWidth(200)
         _row("Font family:", self._font_combo)
 
-        # Font size
         self._font_spin = QSpinBox()
         self._font_spin.setRange(6, 28)
         self._font_spin.setValue(self._app.get("font_size", 9))
@@ -874,33 +878,30 @@ class FieldSelectionDialog(QDialog):
         self._font_spin.setMaximumWidth(80)
         _row("Font size:", self._font_spin)
 
-        _sep = QFrame()
-        _sep.setFrameShape(QFrame.HLine)
-        _sep.setFrameShadow(QFrame.Sunken)
+        # Separator
+        _sep = QFrame(); _sep.setFrameShape(QFrame.HLine); _sep.setFrameShadow(QFrame.Sunken)
         app_layout.addWidget(_sep)
 
         # Colours
-        self._btn_header_bg    = _make_color_button(self._app["header_bg"],    self)
-        self._btn_header_fg    = _make_color_button(self._app["header_fg"],    self)
-        self._btn_value_bg     = _make_color_button(self._app["value_bg"],     self)
+        self._btn_header_bg  = _make_color_button(self._app["header_bg"],  self)
+        self._btn_header_fg  = _make_color_button(self._app["header_fg"],  self)
+        self._btn_value_bg   = _make_color_button(self._app["value_bg"],   self)
         self._btn_value_bg_alt = _make_color_button(self._app["value_bg_alt"], self)
-        self._btn_value_fg     = _make_color_button(self._app["value_fg"],     self)
-        self._btn_grid         = _make_color_button(self._app["grid_color"],   self)
-        self._btn_border       = _make_color_button(self._app["border_color"], self)
-        self._btn_anchor       = _make_color_button(self._app["anchor_color"], self)
+        self._btn_value_fg   = _make_color_button(self._app["value_fg"],   self)
+        self._btn_grid       = _make_color_button(self._app["grid_color"], self)
+        self._btn_border     = _make_color_button(self._app["border_color"], self)
+        self._btn_anchor     = _make_color_button(self._app["anchor_color"], self)
 
-        _row("Header background:",    self._btn_header_bg)
-        _row("Header text:",          self._btn_header_fg)
-        _row("Value background:",     self._btn_value_bg)
+        _row("Header background:", self._btn_header_bg)
+        _row("Header text:", self._btn_header_fg)
+        _row("Value background:", self._btn_value_bg)
         _row("Value background (alt):", self._btn_value_bg_alt)
-        _row("Value text:",           self._btn_value_fg)
-        _row("Grid / divider:",       self._btn_grid)
-        _row("Border:",               self._btn_border)
-        _row("Leader / anchor:",      self._btn_anchor)
+        _row("Value text:", self._btn_value_fg)
+        _row("Grid / divider:", self._btn_grid)
+        _row("Border:", self._btn_border)
+        _row("Leader / anchor:", self._btn_anchor)
 
-        _sep2 = QFrame()
-        _sep2.setFrameShape(QFrame.HLine)
-        _sep2.setFrameShadow(QFrame.Sunken)
+        _sep2 = QFrame(); _sep2.setFrameShape(QFrame.HLine); _sep2.setFrameShadow(QFrame.Sunken)
         app_layout.addWidget(_sep2)
 
         # Corner radius
@@ -914,17 +915,17 @@ class FieldSelectionDialog(QDialog):
         # Placement compass
         from qgis.PyQt.QtWidgets import QGridLayout, QButtonGroup
         compass_outer = QWidget()
-        compass_hl    = QHBoxLayout(compass_outer)
+        compass_hl = QHBoxLayout(compass_outer)
         compass_hl.setContentsMargins(0, 0, 0, 0)
         lbl_place = QLabel("Table placement:")
         lbl_place.setFixedWidth(140)
         compass_hl.addWidget(lbl_place)
-        compass_w    = QWidget()
+        compass_w = QWidget()
         compass_grid = QGridLayout(compass_w)
         compass_grid.setSpacing(2)
         compass_grid.setContentsMargins(0, 0, 0, 0)
         self._placement_buttons = {}
-        self._placement_group   = QButtonGroup(self)
+        self._placement_group = QButtonGroup(self)
         self._placement_group.setExclusive(True)
         for arrow, pid, row, col in _PLACEMENT_CELLS:
             btn = QToolButton()
@@ -953,6 +954,7 @@ class FieldSelectionDialog(QDialog):
         self._anchor_cb.setChecked(bool(self._app.get("show_anchor", True)))
         app_layout.addWidget(self._anchor_cb)
 
+        # Disable style combo when anchor is hidden
         def _sync_leader_combo(checked):
             self._leader_combo.setEnabled(checked)
         self._anchor_cb.toggled.connect(_sync_leader_combo)
@@ -977,20 +979,30 @@ class FieldSelectionDialog(QDialog):
         self._orientation_combo.setMaximumWidth(160)
         _row("Orientation:", self._orientation_combo)
 
-        # Reset to defaults
+        # Polygon anchor position
+        self._polygon_anchor_combo = QComboBox()
+        for anchor_id, anchor_label in _POLYGON_ANCHOR_OPTIONS:
+            self._polygon_anchor_combo.addItem(anchor_label, anchor_id)
+        saved_anchor = self._app.get("polygon_anchor", "centroid")
+        ai = self._polygon_anchor_combo.findData(saved_anchor)
+        self._polygon_anchor_combo.setCurrentIndex(ai if ai >= 0 else 0)
+        self._polygon_anchor_combo.setMaximumWidth(240)
+        _row("Annotation anchor:", self._polygon_anchor_combo)
+
+        # Reset to defaults button
         def _reset_defaults():
             d = dict(_DEFAULT_APPEARANCE)
             self._font_spin.setValue(d["font_size"])
             idx0 = self._font_combo.findData(d["font_family"])
             self._font_combo.setCurrentIndex(idx0 if idx0 >= 0 else 0)
-            self._btn_header_bg._color    = QColor(d["header_bg"]);    self._btn_header_bg._update_icon()
-            self._btn_header_fg._color    = QColor(d["header_fg"]);    self._btn_header_fg._update_icon()
-            self._btn_value_bg._color     = QColor(d["value_bg"]);     self._btn_value_bg._update_icon()
-            self._btn_value_bg_alt._color = QColor(d["value_bg_alt"]); self._btn_value_bg_alt._update_icon()
-            self._btn_value_fg._color     = QColor(d["value_fg"]);     self._btn_value_fg._update_icon()
-            self._btn_grid._color         = QColor(d["grid_color"]);   self._btn_grid._update_icon()
-            self._btn_border._color       = QColor(d["border_color"]); self._btn_border._update_icon()
-            self._btn_anchor._color       = QColor(d["anchor_color"]); self._btn_anchor._update_icon()
+            self._btn_header_bg._color   = QColor(d["header_bg"]);   self._btn_header_bg._update_icon()
+            self._btn_header_fg._color   = QColor(d["header_fg"]);   self._btn_header_fg._update_icon()
+            self._btn_value_bg._color    = QColor(d["value_bg"]);    self._btn_value_bg._update_icon()
+            self._btn_value_bg_alt._color= QColor(d["value_bg_alt"]);self._btn_value_bg_alt._update_icon()
+            self._btn_value_fg._color    = QColor(d["value_fg"]);    self._btn_value_fg._update_icon()
+            self._btn_grid._color        = QColor(d["grid_color"]);  self._btn_grid._update_icon()
+            self._btn_border._color      = QColor(d["border_color"]);self._btn_border._update_icon()
+            self._btn_anchor._color      = QColor(d["anchor_color"]);self._btn_anchor._update_icon()
             self._corner_spin.setValue(d["corner_radius"])
             self._shadow_cb.setChecked(d["shadow"])
             self._anchor_cb.setChecked(d["show_anchor"])
@@ -1002,7 +1014,8 @@ class FieldSelectionDialog(QDialog):
                 self._placement_buttons[dp].setChecked(True)
             li3 = self._orientation_combo.findData(d.get("orientation", "horizontal"))
             self._orientation_combo.setCurrentIndex(li3 if li3 >= 0 else 0)
-            # sizing defaults were removed — only map-scaling is supported
+            ai2 = self._polygon_anchor_combo.findData(d.get("polygon_anchor", "centroid"))
+            self._polygon_anchor_combo.setCurrentIndex(ai2 if ai2 >= 0 else 0)
 
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.setMaximumWidth(150)
@@ -1021,21 +1034,17 @@ class FieldSelectionDialog(QDialog):
                 cb.toggled.connect(self._update_preview)
             except Exception:
                 pass
-        if getattr(self, "_feature_list", None):
-            try:
-                self._feature_list.itemChanged.connect(self._update_preview)
-            except Exception:
-                pass
-        else:
-            for cb in getattr(self, "_feature_checkboxes", {}).values():
-                try:
-                    cb.toggled.connect(self._update_preview)
-                except Exception:
-                    pass
 
+        # Appearance controls
         try:
             self._font_combo.currentIndexChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        try:
             self._font_spin.valueChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        try:
             self._orientation_combo.currentIndexChanged.connect(self._update_preview)
         except Exception:
             pass
@@ -1060,6 +1069,11 @@ class FieldSelectionDialog(QDialog):
             self._leader_combo.currentIndexChanged.connect(self._update_preview)
         except Exception:
             pass
+        try:
+            self._polygon_anchor_combo.currentIndexChanged.connect(self._update_preview)
+        except Exception:
+            pass
+        # Ensure reset button also refreshes preview
         try:
             reset_btn.clicked.connect(self._update_preview)
         except Exception:
@@ -1108,7 +1122,6 @@ class FieldSelectionDialog(QDialog):
             except Exception:
                 pass
 
-            # Colors
             try:
                 self._btn_header_bg._color = QColor(vals.get("header_bg", self._btn_header_bg._color.name()))
                 self._btn_header_bg._update_icon()
@@ -1165,6 +1178,13 @@ class FieldSelectionDialog(QDialog):
             except Exception:
                 pass
 
+            try:
+                ai = self._polygon_anchor_combo.findData(vals.get("polygon_anchor", "centroid"))
+                if ai >= 0:
+                    self._polygon_anchor_combo.setCurrentIndex(ai)
+            except Exception:
+                pass
+
         finally:
             self._applying_preset = False
         try:
@@ -1184,58 +1204,32 @@ class FieldSelectionDialog(QDialog):
             else:
                 for i in range(self._fields_list.count()):
                     self._fields_list.item(i).setCheckState(Qt.Checked)
-            return
-        # Fallback
-        if self._saved_fields:
-            for name, cb in self._checkboxes.items():
-                cb.setChecked(name in self._saved_fields)
         else:
-            for cb in self._checkboxes.values():
-                cb.setChecked(True)
-
-    def _restore_feature_selection(self):
-        # Default to selecting all features presented in the dialog
-        if getattr(self, "_feature_list", None):
-            for i in range(self._feature_list.count()):
-                self._feature_list.item(i).setCheckState(Qt.Checked)
-            return
-        if getattr(self, "_feature_checkboxes", None):
-            for cb in self._feature_checkboxes.values():
-                cb.setChecked(True)
+            if self._saved_fields:
+                for name, cb in self._checkboxes.items():
+                    cb.setChecked(name in self._saved_fields)
+            else:
+                for cb in self._checkboxes.values():
+                    cb.setChecked(True)
 
     def _select_all(self):
         if getattr(self, "_fields_list", None):
             for i in range(self._fields_list.count()):
                 self._fields_list.item(i).setCheckState(Qt.Checked)
-            return
-        for cb in self._checkboxes.values():
-            cb.setChecked(True)
+        else:
+            for cb in self._checkboxes.values():
+                cb.setChecked(True)
 
     def _select_none(self):
         if getattr(self, "_fields_list", None):
             for i in range(self._fields_list.count()):
                 self._fields_list.item(i).setCheckState(Qt.Unchecked)
-            return
-        for cb in self._checkboxes.values():
-            cb.setChecked(False)
-
-    def _select_all_features(self):
-        if getattr(self, "_feature_list", None):
-            for i in range(self._feature_list.count()):
-                self._feature_list.item(i).setCheckState(Qt.Checked)
-            return
-        for cb in self._feature_checkboxes.values():
-            cb.setChecked(True)
-
-    def _select_none_features(self):
-        if getattr(self, "_feature_list", None):
-            for i in range(self._feature_list.count()):
-                self._feature_list.item(i).setCheckState(Qt.Unchecked)
-            return
-        for cb in self._feature_checkboxes.values():
-            cb.setChecked(False)
+        else:
+            for cb in self._checkboxes.values():
+                cb.setChecked(False)
 
     def selected_fields(self):
+        # Return fields in current visual order, respecting checked state
         if getattr(self, "_fields_list", None):
             res = []
             for i in range(self._fields_list.count()):
@@ -1245,21 +1239,6 @@ class FieldSelectionDialog(QDialog):
             return res
         return [n for n, cb in self._checkboxes.items() if cb.isChecked()]
 
-    def selected_feature_fids(self):
-        if getattr(self, "_feature_list", None):
-            res = []
-            for i in range(self._feature_list.count()):
-                it = self._feature_list.item(i)
-                if it.checkState() == Qt.Checked:
-                    try:
-                        fid = int(it.data(Qt.UserRole))
-                    except Exception:
-                        fid = None
-                    if fid is not None:
-                        res.append(fid)
-            return res
-        return [fid for fid, cb in self._feature_checkboxes.items() if cb.isChecked()]
-
     def should_remember(self):
         return self._remember_cb.isChecked()
 
@@ -1267,48 +1246,40 @@ class FieldSelectionDialog(QDialog):
         return self._remember_app_cb.isChecked()
 
     def get_appearance(self) -> dict:
+        """Return the appearance dict built from current widget state."""
         fam = self._font_combo.currentData()
         return {
-            "font_family":   fam if fam else "",
-            "font_size":     self._font_spin.value(),
-            "header_bg":     self._btn_header_bg._color.name(),
-            "header_fg":     self._btn_header_fg._color.name(),
-            "value_bg":      self._btn_value_bg._color.name(),
-            "value_bg_alt":  self._btn_value_bg_alt._color.name(),
-            "value_fg":      self._btn_value_fg._color.name(),
-            "grid_color":    self._btn_grid._color.name(),
-            "border_color":  self._btn_border._color.name(),
-            "anchor_color":  self._btn_anchor._color.name(),
-            "shadow":        self._shadow_cb.isChecked(),
-            "corner_radius": self._corner_spin.value(),
-            "show_anchor":   self._anchor_cb.isChecked(),
-            "leader_style":  self._leader_combo.currentData(),
-            "placement":     next(
+            "font_family":    fam if fam else "",
+            "font_size":      self._font_spin.value(),
+            "header_bg":      self._btn_header_bg._color.name(),
+            "header_fg":      self._btn_header_fg._color.name(),
+            "value_bg":       self._btn_value_bg._color.name(),
+            "value_bg_alt":   self._btn_value_bg_alt._color.name(),
+            "value_fg":       self._btn_value_fg._color.name(),
+            "grid_color":     self._btn_grid._color.name(),
+            "border_color":   self._btn_border._color.name(),
+            "anchor_color":   self._btn_anchor._color.name(),
+            "shadow":         self._shadow_cb.isChecked(),
+            "corner_radius":  self._corner_spin.value(),
+            "show_anchor":    self._anchor_cb.isChecked(),
+            "leader_style":   self._leader_combo.currentData(),
+            "placement":      next(
                 (pid for pid, btn in self._placement_buttons.items() if btn.isChecked()),
                 "top"
             ),
-            "orientation":   self._orientation_combo.currentData(),
-            # Only map-scaled sizing is supported currently. Fixed-screen
-            # sizing was removed due to inconsistent behaviour and may be
-            # re-introduced in a future revision.
+            "orientation":     self._orientation_combo.currentData(),
+            "polygon_anchor":  self._polygon_anchor_combo.currentData(),
         }
 
     def _update_preview(self):
-        """Refresh preview: choose a sample feature and current appearance/fields."""
+        """Refresh the live preview widget to reflect current selection/state."""
         if not getattr(self, "_preview", None):
             return
         try:
             fields = self.selected_fields()
-            fids = self.selected_feature_fids()
-            sample = getattr(self, "_feature", None)
-            if fids:
-                fid0 = fids[0]
-                for feat in self._features:
-                    if feat.id() == fid0:
-                        sample = feat
-                        break
+            feature = getattr(self, "_feature", None)
             self._preview.set_fields(fields)
-            self._preview.set_feature(sample)
+            self._preview.set_feature(feature)
             app = self.get_appearance()
             self._preview.set_appearance(app)
             self._preview.set_font_size(app.get("font_size", self._app.get("font_size", 9)))
@@ -1322,28 +1293,34 @@ class FieldSelectionDialog(QDialog):
 # Annotation Item — renders in QgsAnnotationLayer (canvas + print layout)
 # ---------------------------------------------------------------------------
 
-class AttributeTableAnnotationItem(QgsAnnotationItem):
+class PolygonAttributeTableAnnotationItem(QgsAnnotationItem):
     """
-    Excel-style two-row attribute table anchored to a geographic point.
+    Excel-style two-row attribute table anchored to a polygon feature's centroid.
 
-    Subclasses QgsAnnotationItem so it lives inside a QgsAnnotationLayer and
-    appears both in the live canvas and in Print Layout exports.
+    Subclasses QgsAnnotationItem so it lives inside a QgsAnnotationLayer.
+    This means it is rendered by QGIS's standard map renderer and therefore
+    appears BOTH in the live canvas and in Print Layout exports — unlike a
+    QgsMapCanvasItem which is canvas-only.
+
+    The table is drawn with QPainter inside render(), translating to the
+    screen/paper coordinates of the polygon centroid. Font metrics are
+    queried from the actual output device so the table scales correctly
+    between screen (96 dpi) and print (300+ dpi).
     """
 
-    ITEM_TYPE = "show_point_layer_attribute_table_annotation_v1"
+    ITEM_TYPE = "show_polygon_attribute_table_annotation_v1"
 
     def __init__(self, map_point, feature, layer, fields,
                  font_size, null_display, appearance=None):
         super().__init__()
-        self._map_point_x  = map_point.x()
-        self._map_point_y  = map_point.y()
-        self._feature      = feature
-        self._layer        = layer
-        self._fields       = fields
+        self._map_point_x = map_point.x()
+        self._map_point_y = map_point.y()
+        self._feature     = feature
+        self._layer       = layer
+        self._fields      = fields
         self._null_display = null_display
 
-        # Keep feature id for live re-querying during render; keep feature
-        # snapshot as a fallback so behaviour is unchanged if re-query fails.
+        # Keep feature id for live re-querying during render
         try:
             self._fid = int(feature.id()) if feature is not None else None
         except Exception:
@@ -1363,14 +1340,15 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         return self.ITEM_TYPE
 
     def clone(self):
-        return AttributeTableAnnotationItem(
+        return PolygonAttributeTableAnnotationItem(
             QgsPointXY(self._map_point_x, self._map_point_y),
             self._feature, self._layer, self._fields,
             self._app.get("font_size", 9), self._null_display,
-            dict(self._app),
+            dict(self._app)
         )
 
     def boundingBox(self, *args):
+        # Small geographic rectangle around the anchor centroid
         buf = 1e-4
         return QgsRectangle(
             self._map_point_x - buf, self._map_point_y - buf,
@@ -1401,11 +1379,7 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
 
     @staticmethod
     def _make_font_from_app(app, bold=False):
-        """Create a QFont from appearance settings (map-scaled only).
-
-        Fixed-screen sizing was removed due to inconsistent rendering
-        behaviour; this may be revisited in a future update.
-        """
+        """Create a QFont from appearance settings."""
         f = QFont()
         fam = app.get("font_family", "")
         if fam:
@@ -1418,38 +1392,44 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
 
     @staticmethod
     def _table_offset(placement, w, h, leader_len):
+        """
+        Return (tx, ty) — top-left of table relative to the anchor origin.
+        Y increases downward (painter coordinate space).
+        """
         ll = leader_len
         p  = placement
-        if   p == "top":          return -w / 2.0,  -(h + ll)
-        elif p == "bottom":       return -w / 2.0,   ll
-        elif p == "left":         return -(w + ll), -h / 2.0
-        elif p == "right":        return  ll,        -h / 2.0
-        elif p == "top-left":     return -(w + ll), -(h + ll)
-        elif p == "top-right":    return  ll,        -(h + ll)
-        elif p == "bottom-left":  return -(w + ll),  ll
-        elif p == "bottom-right": return  ll,         ll
-        elif p == "center":       return -w / 2.0,  -h / 2.0
-        else:                     return -w / 2.0,  -(h + ll)
+        if   p == "top":          return -w / 2.0,   -(h + ll)
+        elif p == "bottom":       return -w / 2.0,    ll
+        elif p == "left":         return -(w + ll),  -h / 2.0
+        elif p == "right":        return  ll,         -h / 2.0
+        elif p == "top-left":     return -(w + ll),  -(h + ll)
+        elif p == "top-right":    return  ll,         -(h + ll)
+        elif p == "bottom-left":  return -(w + ll),   ll
+        elif p == "bottom-right": return  ll,          ll
+        elif p == "center":       return -w / 2.0,   -h / 2.0
+        else:                     return -w / 2.0,   -(h + ll)
 
     @staticmethod
     def _leader_start(placement, tx, ty, w, h):
+        """Return QPointF on the table edge that faces the anchor dot."""
         p = placement
-        if   p == "top":          return QPointF(tx + w / 2, ty + h)
-        elif p == "bottom":       return QPointF(tx + w / 2, ty)
-        elif p == "left":         return QPointF(tx + w,     ty + h / 2)
-        elif p == "right":        return QPointF(tx,         ty + h / 2)
-        elif p == "top-left":     return QPointF(tx + w,     ty + h)
-        elif p == "top-right":    return QPointF(tx,         ty + h)
-        elif p == "bottom-left":  return QPointF(tx + w,     ty)
-        elif p == "bottom-right": return QPointF(tx,         ty)
-        elif p == "center":       return QPointF(tx + w / 2, ty + h / 2)
-        else:                     return QPointF(tx + w / 2, ty + h)
+        if   p == "top":          return QPointF(tx + w / 2,  ty + h)
+        elif p == "bottom":       return QPointF(tx + w / 2,  ty)
+        elif p == "left":         return QPointF(tx + w,      ty + h / 2)
+        elif p == "right":        return QPointF(tx,          ty + h / 2)
+        elif p == "top-left":     return QPointF(tx + w,      ty + h)
+        elif p == "top-right":    return QPointF(tx,          ty + h)
+        elif p == "bottom-left":  return QPointF(tx + w,      ty)
+        elif p == "bottom-right": return QPointF(tx,          ty)
+        elif p == "center":       return QPointF(tx + w / 2,  ty + h / 2)
+        else:                     return QPointF(tx + w / 2,  ty + h)
 
     # ------------------------------------------------------------------
-    # Core render
+    # Core render — called for both canvas repaints and print layout export
     # ------------------------------------------------------------------
 
     def render(self, context, feedback=None):
+        """Render the table at the geographic anchor point (polygon centroid)."""
         try:
             pt = QgsPointXY(self._map_point_x, self._map_point_y)
             ct = context.coordinateTransform()
@@ -1459,41 +1439,39 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
             except Exception:
                 pass
 
-            screen  = context.mapToPixel().transform(pt)
+            screen = context.mapToPixel().transform(pt)
+
             painter = context.painter()
             painter.save()
-
-            # Always translate to the anchor; fonts use configured point-size
-            # and therefore scale with the map.
             painter.translate(screen.x(), screen.y())
-
             self._draw_table(painter)
             painter.restore()
         except Exception as e:
             try:
                 from qgis.core import QgsMessageLog, Qgis
                 QgsMessageLog.logMessage(
-                    f"[LayerAttributeTableAnnotation] render() error: {e}",
-                    "RightClickUtils", Qgis.Warning,
+                    f"[PolygonAttributeTableAnnotation] render() error: {e}",
+                    "RightClickUtils", Qgis.Warning
                 )
             except Exception:
                 pass
 
     def _draw_table(self, painter):
+        """Draw the full table with current painter origin at the anchor point."""
         app          = self._app
-        header_bg    = QColor(app.get("header_bg",    "#217346"))
+        header_bg    = QColor(app.get("header_bg",    "#C05020"))
         header_fg    = QColor(app.get("header_fg",    "#FFFFFF"))
         value_bg     = QColor(app.get("value_bg",     "#FFFFFF"))
-        value_bg_alt = QColor(app.get("value_bg_alt", "#EAF4EE"))
+        value_bg_alt = QColor(app.get("value_bg_alt", "#FAF0EA"))
         value_fg     = QColor(app.get("value_fg",     "#111111"))
         grid_color   = QColor(app.get("grid_color",   "#B0B0B0"))
-        border_color = QColor(app.get("border_color", "#155A30"))
-        anchor_color = QColor(app.get("anchor_color", "#217346"))
+        border_color = QColor(app.get("border_color", "#7A3010"))
+        anchor_color = QColor(app.get("anchor_color", "#C05020"))
         corner_r     = float(app.get("corner_radius", 5))
-        draw_shadow  = bool(app.get("shadow",         True))
-        show_anchor  = bool(app.get("show_anchor",    True))
+        draw_shadow  = bool(app.get("shadow", True))
+        show_anchor  = bool(app.get("show_anchor", True))
         leader_style = app.get("leader_style", "dot")
-        placement    = app.get("placement",    "top")
+        placement    = app.get("placement", "top")
 
         # Attempt to fetch a live copy of the feature so attribute edits
         # made in the layer or attribute table are reflected immediately.
@@ -1518,9 +1496,10 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
             except Exception:
                 return None
 
-        painter.setRenderHint(QPainter.Antialiasing,     True)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
 
+        # --- Build fonts and measure using the actual output device ---
         header_font = self._make_font_from_app(app, bold=True)
         value_font  = self._make_font_from_app(app, bold=False)
 
@@ -1529,6 +1508,7 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
         painter.setFont(value_font)
         fm_v = painter.fontMetrics()
 
+        # Cell padding: proportional to font so it scales with DPI
         pad_x = max(4, fm_h.averageCharWidth())
         pad_y = max(2, fm_h.descent() + 1)
         row_h = max(fm_h.height(), fm_v.height()) + 2 * pad_y
@@ -1547,9 +1527,10 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 cw  = min(cw, max_col_w)
                 col_widths.append(cw)
 
-            table_w      = sum(col_widths)
-            table_h      = 2 * row_h
+            table_w = sum(col_widths)
+            table_h = 2 * row_h
         else:
+            # Vertical: single label column (header style) + value column
             label_widths = []
             value_widths = []
             for field_name in self._fields:
@@ -1568,12 +1549,15 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
             table_w = left_col_w + right_col_w
             table_h = row_h * max(1, len(self._fields))
 
+        # Leader line and anchor dot sizes
         leader_len   = row_h * 0.9
         anchor_dot_r = row_h * 0.22
         shadow_off   = max(1.0, row_h * 0.15)
 
+        # Table position relative to anchor
         tx, ty = self._table_offset(placement, table_w, table_h, leader_len)
 
+        # ---- Drop shadow ----
         if draw_shadow:
             so = shadow_off
             sp = QPainterPath()
@@ -1582,15 +1566,19 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
             painter.setBrush(QBrush(QColor(0, 0, 0, 60)))
             painter.drawPath(sp)
 
+        # ---- Clip to rounded table rect for cell fills ----
         table_path = QPainterPath()
         table_path.addRoundedRect(QRectF(tx, ty, table_w, table_h), corner_r, corner_r)
         painter.setClipPath(table_path)
 
+        # ---- Header / cells drawing ----
         painter.setPen(Qt.NoPen)
         if orientation == "horizontal":
+            # Header full-width
             painter.setBrush(QBrush(header_bg))
             painter.drawRect(QRectF(tx, ty, table_w, row_h))
 
+            # Value row alternating fills
             x = tx
             for ci, cw in enumerate(col_widths):
                 bg = value_bg_alt if ci % 2 == 0 else value_bg
@@ -1598,6 +1586,7 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.drawRect(QRectF(x, ty + row_h, cw, row_h))
                 x += cw
 
+            # Grid lines
             painter.setPen(QPen(grid_color, 0.8))
             x = tx
             for cw in col_widths[:-1]:
@@ -1605,6 +1594,7 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.drawLine(QPointF(x, ty), QPointF(x, ty + table_h))
             painter.drawLine(QPointF(tx, ty + row_h), QPointF(tx + table_w, ty + row_h))
 
+            # Text
             painter.setClipping(False)
 
             painter.setFont(header_font)
@@ -1629,12 +1619,15 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.drawText(cell_rect, Qt.AlignCenter, elided)
                 x += cw
         else:
+            # Vertical layout
             left_w = left_col_w
             right_w = right_col_w
 
+            # Left column background (header style)
             painter.setBrush(QBrush(header_bg))
             painter.drawRect(QRectF(tx, ty, left_w, table_h))
 
+            # Right column alternating row fills
             y = ty
             for ri in range(len(self._fields)):
                 bg = value_bg_alt if ri % 2 == 0 else value_bg
@@ -1642,6 +1635,7 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.drawRect(QRectF(tx + left_w, y, right_w, row_h))
                 y += row_h
 
+            # Grid lines
             painter.setPen(QPen(grid_color, 0.8))
             painter.drawLine(QPointF(tx + left_w, ty), QPointF(tx + left_w, ty + table_h))
             y = ty
@@ -1671,10 +1665,12 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.drawText(cell_rect, Qt.AlignCenter, elided)
                 y += row_h
 
+        # ---- Outer border ----
         painter.setPen(QPen(border_color, 1.5))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(table_path)
 
+        # ---- Leader line + anchor dot ----
         if show_anchor:
             if leader_style != "none":
                 _qt_style = {
@@ -1685,72 +1681,74 @@ class AttributeTableAnnotationItem(QgsAnnotationItem):
                 painter.setPen(QPen(anchor_color, max(1.0, row_h * 0.07), _qt_style))
                 painter.drawLine(
                     self._leader_start(placement, tx, ty, table_w, table_h),
-                    QPointF(0.0, 0.0),
+                    QPointF(0.0, 0.0)
                 )
             painter.setPen(QPen(border_color, max(1.0, row_h * 0.1)))
             painter.setBrush(QBrush(anchor_color))
             painter.drawEllipse(QPointF(0.0, 0.0), anchor_dot_r, anchor_dot_r)
 
 
-class ShowPointLayerAttributeTableAction(BaseAction):
-    """
-    Places attribute-table annotations on the map for every point feature
-    in the clicked layer.  Re-triggering on the same layer removes all
-    annotations (toggle).
+# ---------------------------------------------------------------------------
+# Action Class
+# ---------------------------------------------------------------------------
 
-    A single QgsAnnotationLayer is created per source layer so the QGIS
-    layer panel stays clean even on large datasets.
+class ShowPolygonAttributeTableAction(BaseAction):
+    """
+    Places an Excel-like attribute annotation directly on the map canvas,
+    anchored to the clicked polygon feature's centroid.
+
+    The annotation moves with the map on pan/zoom.
+    Triggering on the same feature again removes its annotation.
     """
 
     _SELECTION_SETTINGS_PREFIX = (
-        "RightClickUtilities/show_point_layer_attribute_table/saved_fields"
+        "RightClickUtilities/show_polygon_attribute_table/saved_fields"
     )
 
     def __init__(self):
         super().__init__()
 
-        self.action_id   = "show_point_layer_attribute_table"
-        self.name        = "Show Attribute Table on Map (All Points)"
-        self.category    = "Information"
+        self.action_id  = "show_polygon_attribute_table"
+        self.name       = "Show Attribute Table on Map"
+        self.category   = "Information"
         self.description = (
-            "Place an Excel-like attribute table annotation for every point in "
-            "the layer, anchored to each point's geographic coordinates. "
-            "Field names appear in the header row; values appear below. "
-            "Trigger again on the same layer to remove all annotations."
+            "Place an Excel-like attribute table annotation directly on the map, "
+            "anchored to the clicked polygon centroid. Field names in the header row; "
+            "values in the row below. Trigger again on the same feature to remove it."
         )
         self.enabled = True
 
-        self.set_action_scope("layer")
-        self.set_supported_scopes(["layer"])
-        self.set_supported_click_types(["point", "multipoint"])
-        self.set_supported_geometry_types(["point", "multipoint"])
+        self.set_action_scope("feature")
+        self.set_supported_scopes(["feature"])
+        self.set_supported_click_types(["polygon", "multipolygon"])
+        self.set_supported_geometry_types(["polygon", "multipolygon"])
 
-        # layer_id  →  {'ann_layer_id': str, 'item_ids': list[str]}
-        self._active_layers: dict = {}
+        # Dict: (layer_id, feature_id) -> annotation item ID string.
+        self._active_items = {}
 
-        # annotation item id  →  Python AttributeTableAnnotationItem
-        # Must keep Python-side refs alive so SIP's virtual dispatch works
-        # after C++ takes ownership of items via QgsAnnotationLayer.addItem().
-        self._annotation_items_by_id: dict = {}
+        # Dict: annotation item ID -> Python PolygonAttributeTableAnnotationItem instance.
+        # CRITICAL: must keep Python-side references alive so that SIP's virtual
+        # method dispatch (C++ → Python render()) continues to work after C++
+        # takes ownership of the item via addItem().
+        self._annotation_items_by_id = {}
 
-        # Payload for the most-recent execute() — used by get_undo_payload()
+        # Dict: (layer_id, feature_id) -> QgsAnnotationLayer ID string.
+        self._annotation_layer_ids = {}
+
+        # Stores payload for the most recent execute()
         self._last_payload = None
 
-        # Register as own undo handler so the history manager calls
-        # apply_undo / apply_redo on this instance directly.
+        # Register this action as its own undo/redo handler
         self.register_undo_handler()
 
     # ------------------------------------------------------------------
-    # Settings
-    # ------------------------------------------------------------------
-
     def get_settings_schema(self):
         return {
             "table_font_size": {
                 "type": "int",
                 "default": 9,
                 "label": "Table Font Size",
-                "description": "Font size (pt) for text inside the map annotations",
+                "description": "Font size (pt) for text inside the map annotation",
                 "min": 6,
                 "max": 20,
                 "step": 1,
@@ -1768,23 +1766,7 @@ class ShowPointLayerAttributeTableAction(BaseAction):
                 "label": "Remember Field Selection",
                 "description": "Save and restore the field selection per layer",
             },
-            "max_features": {
-                "type": "int",
-                "default": 200,
-                "label": "Max Features to Annotate",
-                "description": (
-                    "Maximum number of point features to annotate per layer. "
-                    "If the layer exceeds this limit a warning is shown before proceeding."
-                ),
-                "min": 1,
-                "max": 5000,
-                "step": 50,
-            },
         }
-
-    # ------------------------------------------------------------------
-    # Undo / redo support
-    # ------------------------------------------------------------------
 
     def supports_undo(self):
         return True
@@ -1793,145 +1775,134 @@ class ShowPointLayerAttributeTableAction(BaseAction):
         return "trivial"
 
     def get_undo_payload(self, context, execute_result=None):
+        """Return the data needed to undo (remove) or redo (recreate) the annotation."""
         return self._last_payload or {}
 
     def apply_undo(self, payload):
-        """Undo: remove every annotation placed for the layer."""
+        """Undo: remove the annotation and its dedicated layer."""
         try:
-            layer_id     = payload.get("layer_id")
-            ann_layer_id = payload.get("ann_layer_id")
+            item_id    = payload.get("annotation_item_id")
+            layer_id   = payload.get("layer_id")
+            feature_id = payload.get("feature_id")
 
-            if layer_id:
-                self._remove_all_for_layer(layer_id)
-            elif ann_layer_id:
-                # Fallback when layer_id missing from old payloads
-                try:
-                    from qgis.core import QgsProject
-                    QgsProject.instance().removeMapLayer(ann_layer_id)
-                except Exception:
-                    pass
+            if not item_id:
+                return True, "Annotation was already removed"
 
-            return True, "All attribute table annotations removed"
+            self._annotation_items_by_id.pop(item_id, None)
+
+            if layer_id and feature_id is not None:
+                key = (layer_id, int(feature_id))
+                self._active_items.pop(key, None)
+                self._remove_annotation_layer(key)
+            else:
+                ann_layer_id = payload.get("ann_layer_id")
+                if ann_layer_id:
+                    try:
+                        from qgis.core import QgsProject
+                        QgsProject.instance().removeMapLayer(ann_layer_id)
+                    except Exception:
+                        pass
+
+            return True, "Attribute table annotation removed"
         except Exception as e:
             return False, f"Undo failed: {e}"
 
     def apply_redo(self, payload):
-        """Redo: recreate all annotations from stored payload data."""
+        """Redo: recreate the annotation from stored payload data."""
         try:
-            from qgis.core import QgsProject, QgsFeatureRequest, QgsCoordinateTransform
+            from qgis.core import QgsProject, QgsFeatureRequest
 
-            layer_id      = payload.get("layer_id")
-            fields        = payload.get("fields_shown", [])
-            font_size     = int(payload.get("font_size", 9))
-            null_disp     = str(payload.get("null_display", "NULL"))
-            appearance    = payload.get("appearance") or {}
-            features_data = payload.get("features_data", [])
+            layer_id   = payload.get("layer_id")
+            feature_id = payload.get("feature_id")
+            fields     = payload.get("fields_shown", [])
+            pt_x       = payload.get("map_point_x")
+            pt_y       = payload.get("map_point_y")
+            font_size  = int(payload.get("font_size", 9))
+            null_disp  = str(payload.get("null_display", "NULL"))
+            appearance = payload.get("appearance") or {}
 
-            if not layer_id or not fields:
+            if not layer_id or feature_id is None or not fields:
                 return False, "Redo payload is incomplete"
 
             layer = QgsProject.instance().mapLayer(layer_id)
             if not layer:
-                return False, "Layer no longer exists – cannot redo annotations"
+                return False, "Layer no longer exists – cannot redo annotation"
 
-            # Clean up any stale state
-            self._remove_all_for_layer(layer_id)
+            fid = int(feature_id)
+            feature = None
+            for f in layer.getFeatures(QgsFeatureRequest().setFilterFid(fid)):
+                feature = f
+                break
+            if feature is None:
+                return False, "Feature no longer exists – cannot redo annotation"
 
-            canvas_crs = iface.mapCanvas().mapSettings().destinationCrs()
-            layer_crs  = layer.crs()
-            transform  = None
-            if layer_crs.isValid() and canvas_crs.isValid() and layer_crs != canvas_crs:
-                transform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
+            map_point = QgsPointXY(float(pt_x), float(pt_y))
+            key       = (layer_id, fid)
 
-            ann_layer = self._get_or_create_annotation_layer(layer_id, layer.name())
-            item_ids  = []
+            # Remove any stale annotation + layer for this feature
+            old_id = self._active_items.pop(key, None)
+            self._annotation_items_by_id.pop(old_id, None)
+            self._remove_annotation_layer(key)
 
-            for fd in features_data:
-                fid   = int(fd["fid"])
-                pt_x  = float(fd["map_point_x"])
-                pt_y  = float(fd["map_point_y"])
+            item = PolygonAttributeTableAnnotationItem(
+                map_point=map_point,
+                feature=feature,
+                layer=layer,
+                fields=fields,
+                font_size=font_size,
+                null_display=null_disp,
+                appearance=appearance,
+            )
+            ann_layer  = self._get_or_create_annotation_layer(key, layer.name(), fid)
+            new_id     = ann_layer.addItem(item)
+            self._annotation_items_by_id[new_id] = item
+            self._active_items[key] = new_id
 
-                feature = None
-                for f in layer.getFeatures(QgsFeatureRequest().setFilterFid(fid)):
-                    feature = f
-                    break
-                if feature is None:
-                    continue
-
-                map_point = QgsPointXY(pt_x, pt_y)
-                item = AttributeTableAnnotationItem(
-                    map_point=map_point,
-                    feature=feature,
-                    layer=layer,
-                    fields=fields,
-                    font_size=appearance.get("font_size", font_size),
-                    null_display=null_disp,
-                    appearance=appearance,
-                )
-                new_id = ann_layer.addItem(item)
-                self._annotation_items_by_id[new_id] = item
-                item_ids.append(new_id)
-
-            if not item_ids:
-                return False, "No features could be restored – all may have been deleted"
-
-            self._active_layers[layer_id] = {
-                "ann_layer_id": ann_layer.id(),
-                "item_ids":     item_ids,
-            }
-
-            # Keep payload up-to-date so the next undo cycle finds the new layer id
-            payload["ann_layer_id"] = ann_layer.id()
+            # Update payload so next apply_undo() finds this new item and layer
+            payload["annotation_item_id"] = new_id
+            payload["ann_layer_id"] = self._annotation_layer_ids.get(key)
 
             ann_layer.triggerRepaint()
-            return True, f"Restored {len(item_ids)} attribute table annotation(s)"
+            return True, "Attribute table annotation restored"
         except Exception as e:
             return False, f"Redo failed: {e}"
 
     # ------------------------------------------------------------------
-    # Execute
-    # ------------------------------------------------------------------
-
     def execute(self, context):
         detected_features = context.get("detected_features", [])
         if not detected_features:
-            self.show_error(
-                "Show Layer Attribute Table",
-                "No point layer found here."
-            )
+            self.show_error("Show Attribute Table", "No polygon feature found here.")
             return
 
-        layer = detected_features[0].layer
+        detected = detected_features[0]
+        feature  = detected.feature
+        layer    = detected.layer
 
-        if layer.geometryType() != QgsWkbTypes.PointGeometry:
+        if layer.geometryType() != QgsWkbTypes.PolygonGeometry:
             self.show_error(
-                "Show Layer Attribute Table",
-                "This action only works with point (or multipoint) layers."
+                "Show Attribute Table",
+                "This action only works with polygon (or multipolygon) layers."
             )
             return
 
         if layer.fields().count() == 0:
-            self.show_info(
-                "Show Layer Attribute Table",
-                "This layer has no attribute fields."
-            )
+            self.show_info("Show Attribute Table", "This layer has no attribute fields.")
             return
 
-        layer_id = layer.id()
+        key = (layer.id(), feature.id())
 
-        # --- Toggle: if annotations already active for this layer, remove all ---
-        if layer_id in self._active_layers:
-            count = len(self._active_layers[layer_id].get("item_ids", []))
-            self._remove_all_for_layer(layer_id)
+        # --- Toggle: if annotation already exists for this feature, remove it ---
+        if key in self._active_items:
+            self._remove_item(key)
             self.record_informational(
                 description=(
-                    f"Removed {count} attribute table annotation(s) "
-                    f"for layer '{layer.name()}'"
+                    f"Removed attribute table annotation for feature ID "
+                    f"{feature.id()} on layer '{layer.name()}'"
                 )
             )
             return
 
-        # --- Read settings ---
+        # --- Settings ---
         try:
             font_size = int(self.get_setting("table_font_size", 9))
         except (ValueError, TypeError):
@@ -1944,251 +1915,150 @@ class ShowPointLayerAttributeTableAction(BaseAction):
         except (ValueError, TypeError):
             remember = True
 
-        try:
-            max_features = int(self.get_setting("max_features", 200))
-        except (ValueError, TypeError):
-            max_features = 200
+        saved_fields = self._load_saved_fields(layer.id()) if remember else []
 
-        # --- Warn when layer has more features than the configured limit ---
-        feature_count = layer.featureCount()
-        if feature_count > max_features:
-            parent_w = iface.mainWindow() if iface else None
-            resp = QMessageBox.question(
-                parent_w,
-                "Show Layer Attribute Table",
-                (
-                    f"This layer has {feature_count} feature(s), but the current "
-                    f"limit is {max_features}.\n\n"
-                    f"Only the first {max_features} features will be annotated.\n\n"
-                    "Do you want to continue?"
-                ),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if resp != QMessageBox.Yes:
-                return
-
-        # --- Representative feature for the field-selection dialog ---
-        first_feature = None
-        for f in layer.getFeatures():
-            first_feature = f
-            break
-
-        if first_feature is None:
-            self.show_info(
-                "Show Layer Attribute Table",
-                "This layer has no features."
-            )
-            return
-
-        # --- Field selection + appearance dialog + feature selection ---
-        saved_fields  = self._load_saved_fields(layer_id) if remember else []
+        # --- Field selection + appearance dialog ---
         parent_widget = iface.mainWindow() if iface else None
-
-        # Present up to `max_features` features for checkbox selection in the dialog
-        features_for_dialog = []
-        for f in layer.getFeatures():
-            features_for_dialog.append(f)
-            if len(features_for_dialog) >= max_features:
-                break
-
-        sel_dlg = FieldSelectionDialog(
+        sel_dlg = PolygonFieldSelectionDialog(
             layer=layer,
-            feature=first_feature,
-            features=features_for_dialog,
+            feature=feature,
             saved_fields=saved_fields,
             saved_appearance=_load_saved_appearance(),
             null_display=null_display,
-            parent=parent_widget,
+            parent=parent_widget
         )
         if sel_dlg.exec_() != QDialog.Accepted:
             return
 
         selected = sel_dlg.selected_fields()
         if not selected:
-            self.show_warning(
-                "Show Layer Attribute Table",
-                "No fields were selected."
-            )
-            return
-
-        selected_fids = sel_dlg.selected_feature_fids()
-        if not selected_fids:
-            self.show_warning(
-                "Show Layer Attribute Table",
-                "No features were selected."
-            )
+            self.show_warning("Show Attribute Table", "No fields were selected.")
             return
 
         if remember and sel_dlg.should_remember():
-            self._save_selected_fields(layer_id, selected)
+            self._save_selected_fields(layer.id(), selected)
 
+        # Collect appearance and optionally persist globally
         appearance = sel_dlg.get_appearance()
         if sel_dlg.should_remember_appearance():
             _save_appearance(appearance)
 
-        # --- Prepare CRS transform (layer CRS → canvas CRS) ---
-        canvas_crs = iface.mapCanvas().mapSettings().destinationCrs()
-        layer_crs  = layer.crs()
-        transform  = None
-        if layer_crs.isValid() and canvas_crs.isValid() and layer_crs != canvas_crs:
-            from qgis.core import QgsCoordinateTransform, QgsProject
-            transform = QgsCoordinateTransform(
-                layer_crs, canvas_crs, QgsProject.instance()
-            )
-
-        # --- Create the single annotation layer for this source layer ---
-        ann_layer     = self._get_or_create_annotation_layer(layer_id, layer.name())
-        item_ids      = []
-        features_data = []
-        processed     = 0
-
-        selected_fids_set = set(selected_fids)
-
-        for feature in layer.getFeatures():
-            if processed >= max_features:
-                break
-
-            # Skip features not chosen by the user
-            if feature.id() not in selected_fids_set:
-                continue
-
-            geom = feature.geometry()
-            if geom is None or geom.isEmpty():
-                continue
-
-            pt = geom.asPoint()
-            if transform:
-                try:
-                    pt = transform.transform(pt)
-                except Exception:
-                    continue
-
-            map_point = QgsPointXY(pt.x(), pt.y())
-
-            item = AttributeTableAnnotationItem(
-                map_point=map_point,
-                feature=feature,
-                layer=layer,
-                fields=selected,
-                font_size=appearance.get("font_size", font_size),
-                null_display=null_display,
-                appearance=appearance,
-            )
-            new_id = ann_layer.addItem(item)
-            self._annotation_items_by_id[new_id] = item
-            item_ids.append(new_id)
-            features_data.append({
-                "fid":         feature.id(),
-                "map_point_x": map_point.x(),
-                "map_point_y": map_point.y(),
-            })
-            processed += 1
-
-        # --- Bail out if no valid geometries were found ---
-        if not item_ids:
-            self.show_warning(
-                "Show Layer Attribute Table",
-                "No features with valid geometry were found."
-            )
-            from qgis.core import QgsProject
-            QgsProject.instance().removeMapLayer(ann_layer.id())
-            self._active_layers.pop(layer_id, None)
+        # --- Get geographic anchor point for the polygon feature ---
+        geom = feature.geometry()
+        if geom is None or geom.isEmpty():
+            self.show_error("Show Attribute Table", "Feature has no geometry.")
             return
 
-        self._active_layers[layer_id] = {
-            "ann_layer_id": ann_layer.id(),
-            "item_ids":     item_ids,
-        }
+        # Compute anchor from the selected polygon_anchor setting
+        anchor_type = appearance.get("polygon_anchor", "centroid")
+        pt = _get_polygon_anchor_point(geom, anchor_type)
 
+        # Transform to the map (canvas) CRS so the annotation layer positions it
+        # correctly regardless of the feature layer's own CRS.
+        try:
+            from qgis.core import QgsCoordinateTransform, QgsProject as _Proj
+            canvas_crs = iface.mapCanvas().mapSettings().destinationCrs()
+            if layer.crs().isValid() and canvas_crs.isValid() and layer.crs() != canvas_crs:
+                _ct = QgsCoordinateTransform(layer.crs(), canvas_crs, _Proj.instance())
+                pt = _ct.transform(pt)
+        except Exception:
+            pass
+        map_point = QgsPointXY(pt.x(), pt.y())
+
+        # Create the annotation item and add it to the annotation layer
+        item = PolygonAttributeTableAnnotationItem(
+            map_point=map_point,
+            feature=feature,
+            layer=layer,
+            fields=selected,
+            font_size=appearance.get("font_size", font_size),
+            null_display=null_display,
+            appearance=appearance,
+        )
+        ann_layer  = self._get_or_create_annotation_layer(key, layer.name(), feature.id())
+        new_id     = ann_layer.addItem(item)
+        self._annotation_items_by_id[new_id] = item  # keep Python wrapper alive
+        self._active_items[key] = new_id
         ann_layer.triggerRepaint()
 
-        # --- Record to history with full undo payload ---
+        # Store payload so get_undo_payload() can return it
         self._last_payload = {
-            "layer_id":      layer_id,
-            "layer_name":    layer.name(),
-            "ann_layer_id":  ann_layer.id(),
-            "fields_shown":  selected,
-            "font_size":     font_size,
-            "null_display":  null_display,
-            "appearance":    appearance,
-            "features_data": features_data,
+            "layer_id":            layer.id(),
+            "layer_name":          layer.name(),
+            "feature_id":          feature.id(),
+            "fields_shown":        selected,
+            "map_point_x":         map_point.x(),
+            "map_point_y":         map_point.y(),
+            "font_size":           font_size,
+            "null_display":        null_display,
+            "annotation_item_id":  new_id,
+            "ann_layer_id":        self._annotation_layer_ids.get(key),
+            "appearance":          appearance,
         }
 
         self.record_to_history(
             description=(
-                f"Placed attribute table annotations for {len(item_ids)} point(s) "
+                f"Placed attribute table annotation for feature ID {feature.id()} "
                 f"on layer '{layer.name()}' ({len(selected)} fields)"
             ),
-            undo_type="create_layer",
+            undo_type="create_feature",
             can_undo=True,
             undo_payload=self._last_payload,
             layers=[self.create_layer_descriptor(layer)],
             meta={
-                "layer_id":      layer_id,
-                "layer_name":    layer.name(),
-                "feature_count": len(item_ids),
-                "fields_shown":  selected,
-            },
+                "layer_id":     layer.id(),
+                "layer_name":   layer.name(),
+                "feature_id":   feature.id(),
+                "fields_shown": selected,
+            }
         )
 
     # ------------------------------------------------------------------
-    # Annotation layer management
-    # ------------------------------------------------------------------
-
-    def _get_or_create_annotation_layer(self, layer_id: str, layer_name: str):
+    def _get_or_create_annotation_layer(self, key, source_layer_name, feature_id):
         """
-        Return the existing QgsAnnotationLayer for this source layer, or
-        create a new one named "Attribute Table (All Points) - {layer_name}".
-        One annotation layer is shared by all features of the same source layer.
+        Return the QgsAnnotationLayer for the given (layer_id, fid) key,
+        creating a new one if it doesn't exist or has been removed.
+        Each annotated feature gets its own layer named:
+          "Attribute Table - {source_layer_name} - ID {feature_id}"
         """
         from qgis.core import QgsProject, QgsAnnotationLayer
         proj = QgsProject.instance()
-
-        layer_info      = self._active_layers.get(layer_id, {})
-        existing_ann_id = layer_info.get("ann_layer_id")
-        if existing_ann_id:
-            ann_layer = proj.mapLayer(existing_ann_id)
+        existing_id = self._annotation_layer_ids.get(key)
+        if existing_id:
+            ann_layer = proj.mapLayer(existing_id)
             if ann_layer is not None:
                 return ann_layer
-
-        name      = f"Attribute Table (All Points) - {layer_name}"
+        # Create a dedicated layer for this feature
+        name = f"Attribute Table - {source_layer_name} - ID {feature_id}"
         ann_layer = QgsAnnotationLayer(
             name,
             QgsAnnotationLayer.LayerOptions(proj.transformContext()),
         )
         proj.addMapLayer(ann_layer)
-
-        if layer_id not in self._active_layers:
-            self._active_layers[layer_id] = {}
-        self._active_layers[layer_id]["ann_layer_id"] = ann_layer.id()
+        self._annotation_layer_ids[key] = ann_layer.id()
         return ann_layer
 
-    def _remove_all_for_layer(self, layer_id: str):
-        """Remove the annotation layer and all Python item references for a source layer."""
+    def _remove_annotation_layer(self, key):
+        """Remove the dedicated QgsAnnotationLayer for a feature key."""
         from qgis.core import QgsProject
-        layer_info = self._active_layers.pop(layer_id, None)
-        if not layer_info:
-            return
-
-        for item_id in layer_info.get("item_ids", []):
-            self._annotation_items_by_id.pop(item_id, None)
-
-        ann_layer_id = layer_info.get("ann_layer_id")
-        if ann_layer_id:
+        layer_qgis_id = self._annotation_layer_ids.pop(key, None)
+        if layer_qgis_id:
             try:
-                QgsProject.instance().removeMapLayer(ann_layer_id)
+                QgsProject.instance().removeMapLayer(layer_qgis_id)
             except Exception:
                 pass
 
-    # ------------------------------------------------------------------
-    # Saved field selection helpers
-    # ------------------------------------------------------------------
+    def _remove_item(self, key):
+        """Remove annotation and its dedicated layer by (layer_id, feature_id) key."""
+        item_id = self._active_items.pop(key, None)
+        self._annotation_items_by_id.pop(item_id, None)
+        self._remove_annotation_layer(key)
 
-    def _settings_key(self, layer_id: str) -> str:
+    # ------------------------------------------------------------------
+    def _settings_key(self, layer_id):
         return f"{self._SELECTION_SETTINGS_PREFIX}/{layer_id}"
 
-    def _load_saved_fields(self, layer_id: str) -> list:
+    def _load_saved_fields(self, layer_id):
         try:
             raw = QSettings().value(self._settings_key(layer_id), None)
             if raw is None:
@@ -2201,7 +2071,7 @@ class ShowPointLayerAttributeTableAction(BaseAction):
         except Exception:
             return []
 
-    def _save_selected_fields(self, layer_id: str, fields: list):
+    def _save_selected_fields(self, layer_id, fields):
         try:
             QSettings().setValue(self._settings_key(layer_id), fields)
         except Exception:
@@ -2209,6 +2079,6 @@ class ShowPointLayerAttributeTableAction(BaseAction):
 
 
 # ---------------------------------------------------------------------------
-# Global instance – required for automatic action discovery
+# Global instance - required for automatic action discovery
 # ---------------------------------------------------------------------------
-show_point_layer_attribute_table = ShowPointLayerAttributeTableAction()
+show_polygon_attribute_table = ShowPolygonAttributeTableAction()
