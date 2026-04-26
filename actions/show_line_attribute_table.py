@@ -1561,7 +1561,10 @@ class ShowLineAttributeTableAction(BaseAction):
         self._annotation_items_by_id = {}
         self._annotation_layer_ids = {}
         self._last_payload = None
-        self.register_undo_handler()
+        try:
+            self.register_undo_handler()
+        except Exception:
+            pass
 
     def get_settings_schema(self):
         return {

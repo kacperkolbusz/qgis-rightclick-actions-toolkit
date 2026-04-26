@@ -1738,7 +1738,10 @@ class ShowPointLayerAttributeTableAction(BaseAction):
 
         # Register as own undo handler so the history manager calls
         # apply_undo / apply_redo on this instance directly.
-        self.register_undo_handler()
+        try:
+            self.register_undo_handler()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Settings

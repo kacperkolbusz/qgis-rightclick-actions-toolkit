@@ -1688,7 +1688,10 @@ class ShowPointAttributeTableAction(BaseAction):
         # Register this action as its own undo/redo handler so the history
         # manager calls apply_undo/apply_redo on this instance directly,
         # instead of falling through to the generic create_feature handler.
-        self.register_undo_handler()
+        try:
+            self.register_undo_handler()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def get_settings_schema(self):

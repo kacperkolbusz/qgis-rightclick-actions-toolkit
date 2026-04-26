@@ -1739,7 +1739,10 @@ class ShowPolygonAttributeTableAction(BaseAction):
         self._last_payload = None
 
         # Register this action as its own undo/redo handler
-        self.register_undo_handler()
+        try:
+            self.register_undo_handler()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def get_settings_schema(self):
